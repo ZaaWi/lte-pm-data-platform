@@ -19,6 +19,14 @@ def ftp_download_dir() -> Path:
     return data_input_dir() / "ftp"
 
 
+def runtime_dir() -> Path:
+    return project_root() / "data" / "runtime"
+
+
+def ftp_cycle_lock_path() -> Path:
+    return runtime_dir() / "ftp_run_cycle.lock"
+
+
 def archive_dir() -> Path:
     return project_root() / "data" / "archive"
 

@@ -36,19 +36,26 @@ class ParsedArchiveFile:
     revision: int
     extension: str
     path: str
+    remote_size_bytes: int | None = None
+    remote_modified_at: datetime | None = None
 
     @property
     def interval_key(self) -> tuple[str, datetime]:
         return (self.dataset_family, self.interval_start)
 
-    def as_dict(self) -> dict[str, str | int]:
-        return {
+    def as_dict(self) -> dict[str, str | int | None]:
+        payload: dict[str, str | int | None] = {
             "dataset_family": self.dataset_family,
             "filename": self.filename,
             "interval_start": self.interval_start.strftime("%Y-%m-%d %H:%M:%S"),
             "revision": self.revision,
             "path": self.path,
         }
+        if self.remote_size_bytes is not None:
+            payload["remote_size_bytes"] = self.remote_size_bytes
+        if self.remote_modified_at is not None:
+            payload["remote_modified_at"] = self.remote_modified_at.strftime("%Y-%m-%d %H:%M:%S")
+        return payload
 
 
 def parse_archive_filename(filename: str) -> ParsedArchiveFile | None:
@@ -142,6 +149,8 @@ def discover_local_files(
                     revision=parsed.revision,
                     extension=parsed.extension,
                     path=str(path),
+                    remote_size_bytes=parsed.remote_size_bytes,
+                    remote_modified_at=parsed.remote_modified_at,
                 )
             )
     return apply_revision_policy(

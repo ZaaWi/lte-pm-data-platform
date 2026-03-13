@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+from lte_pm_platform.api.app import create_app
+from lte_pm_platform.api.routers.ingestion import (
+    ingestion_failure_detail,
+    ingestion_failures,
+    ingestion_reconciliation_preview,
+    ingestion_status,
+)
+from lte_pm_platform.api.routers.kpi import (
+    kpi_results_entity_time,
+    kpi_results_region_time,
+    kpi_results_site_time,
+    kpi_validation_entity_time,
+    kpi_validation_region_time,
+    kpi_validation_site_time,
+)
+from lte_pm_platform.api.routers.system import health, ready
+from lte_pm_platform.api.routers.topology import region_coverage, site_coverage, unmapped_entities
+from lte_pm_platform.services.ingestion_service import IngestionService
+from lte_pm_platform.services.kpi_service import KpiService
+from lte_pm_platform.services.topology_service import TopologyService
+
+
+class FakeCursor:
+    def execute(self, query: str) -> None:
+        self.query = query
+
+    def fetchone(self):  # noqa: ANN201
+        return (1,)
+
+    def __enter__(self) -> "FakeCursor":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+        return None
+
+
+class FakeConnection:
+    def cursor(self):  # noqa: ANN201
+        return FakeCursor()
+
+
+def test_create_app_registers_expected_routes() -> None:
+    app = create_app()
+    paths = {route.path for route in app.routes}
+
+    assert "/api/v1/health" in paths
+    assert "/api/v1/ready" in paths
+    assert "/api/v1/ingestion/status" in paths
+    assert "/api/v1/topology/site-coverage" in paths
+    assert "/api/v1/kpi-results/entity-time" in paths
+    assert "/api/v1/kpi-validation/region-time" in paths
+
+
+def test_health() -> None:
+    response = health()
+    assert response.status == "ok"
+
+
+def test_ready() -> None:
+    response = ready(connection=FakeConnection())
+    assert response.database == "ok"
+
+
+def test_ingestion_status(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        IngestionService,
+        "get_status",
+        lambda self, limit_recent_failures: {
+            "status_counts": [{"status": "DISCOVERED", "file_count": 1}],
+            "summary": {"pending_downloads": 1},
+            "latest_scan_at": None,
+            "recent_failures": [],
+        },
+    )
+
+    response = ingestion_status(limit_recent_failures=10, connection=FakeConnection())
+
+    assert response.summary["pending_downloads"] == 1
+
+
+def test_ingestion_failures(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        IngestionService,
+        "list_failures",
+        lambda self, limit: [{"id": 1, "status": "FAILED_INGEST"}],
+    )
+
+    response = ingestion_failures(limit=5, connection=FakeConnection())
+
+    assert response.count == 1
+
+
+def test_ingestion_failure_detail(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        IngestionService,
+        "get_failure",
+        lambda self, remote_file_id: {"id": remote_file_id, "classification": "retryable_ingest"},
+    )
+
+    response = ingestion_failure_detail(remote_file_id=42, connection=FakeConnection())
+
+    assert response.row["id"] == 42
+
+
+def test_reconciliation_preview(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        IngestionService,
+        "get_reconciliation_preview",
+        lambda self, limit: [{"id": 7, "classification": "reconciliation_needed"}],
+    )
+
+    response = ingestion_reconciliation_preview(limit=10, connection=FakeConnection())
+
+    assert response.rows[0]["classification"] == "reconciliation_needed"
+
+
+def test_unmapped_entities(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        TopologyService,
+        "list_unmapped_entities",
+        lambda self, limit: [{"logical_entity_key": "k1"}],
+    )
+
+    response = unmapped_entities(limit=10, connection=FakeConnection())
+
+    assert response.rows[0]["logical_entity_key"] == "k1"
+
+
+def test_site_coverage(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        TopologyService,
+        "summarize_site_coverage",
+        lambda self, limit: [{"site_code": "S1"}],
+    )
+
+    response = site_coverage(limit=10, connection=FakeConnection())
+
+    assert response.rows[0]["site_code"] == "S1"
+
+
+def test_region_coverage(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        TopologyService,
+        "summarize_region_coverage",
+        lambda self, limit: [{"region_code": "R1"}],
+    )
+
+    response = region_coverage(limit=10, connection=FakeConnection())
+
+    assert response.rows[0]["region_code"] == "R1"
+
+
+def test_kpi_results_entity_time(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        KpiService,
+        "list_results",
+        lambda self, **kwargs: [{"dataset_family": "PM/sdr/ltefdd", "kpi_code": "dl_prb_utilization"}],
+    )
+
+    response = kpi_results_entity_time(family="prb", limit=5, dataset_family=None, collect_time_from=None, collect_time_to=None, connection=FakeConnection())
+
+    assert response.rows[0]["kpi_code"] == "dl_prb_utilization"
+
+
+def test_kpi_results_site_time(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        KpiService,
+        "list_results",
+        lambda self, **kwargs: [{"dataset_family": "PM/sdr/ltefdd", "site_code": "S1"}],
+    )
+
+    response = kpi_results_site_time(family="bler", limit=5, dataset_family=None, site_code="S1", collect_time_from=None, collect_time_to=None, connection=FakeConnection())
+
+    assert response.rows[0]["site_code"] == "S1"
+
+
+def test_kpi_results_region_time(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        KpiService,
+        "list_results",
+        lambda self, **kwargs: [{"dataset_family": "PM/sdr/ltefdd", "region_code": "R1"}],
+    )
+
+    response = kpi_results_region_time(family="rrc", limit=5, dataset_family=None, region_code="R1", collect_time_from=None, collect_time_to=None, connection=FakeConnection())
+
+    assert response.rows[0]["region_code"] == "R1"
+
+
+def test_kpi_validation_entity_time(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        KpiService,
+        "list_validation",
+        lambda self, **kwargs: [{"dataset_family": "PM/sdr/ltefdd", "entity_time_rows": 10}],
+    )
+
+    response = kpi_validation_entity_time(family="rrc", connection=FakeConnection())
+
+    assert response.rows[0]["entity_time_rows"] == 10
+
+
+def test_kpi_validation_site_time(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        KpiService,
+        "list_validation",
+        lambda self, **kwargs: [{"dataset_family": "PM/sdr/ltefdd", "site_time_rows": 8}],
+    )
+
+    response = kpi_validation_site_time(family="prb", connection=FakeConnection())
+
+    assert response.rows[0]["site_time_rows"] == 8
+
+
+def test_kpi_validation_region_time(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        KpiService,
+        "list_validation",
+        lambda self, **kwargs: [{"dataset_family": "PM/sdr/ltefdd", "region_time_rows": 4}],
+    )
+
+    response = kpi_validation_region_time(family="bler", connection=FakeConnection())
+
+    assert response.rows[0]["region_time_rows"] == 4

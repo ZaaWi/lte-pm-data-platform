@@ -1,3 +1,14 @@
+DROP VIEW IF EXISTS vw_verified_prb_kpi_execution_validation;
+DROP VIEW IF EXISTS vw_verified_prb_kpi_entity_time;
+DROP VIEW IF EXISTS vw_verified_bler_kpi_execution_validation;
+DROP VIEW IF EXISTS vw_verified_bler_kpi_entity_time;
+DROP VIEW IF EXISTS vw_vendor_indicator_dictionary_details;
+DROP VIEW IF EXISTS vw_semantic_kpi_input_coverage;
+DROP VIEW IF EXISTS vw_semantic_kpi_base_inputs;
+DROP VIEW IF EXISTS vw_semantic_provisional_kpis;
+DROP VIEW IF EXISTS vw_semantic_kpi_definition_details;
+DROP VIEW IF EXISTS vw_semantic_counter_mapping_gaps;
+DROP VIEW IF EXISTS vw_pm_raw_with_counter_semantics;
 DROP VIEW IF EXISTS vw_kpi_ratio_values_by_time_ani;
 DROP VIEW IF EXISTS vw_kpi_ratio_values_by_time;
 DROP VIEW IF EXISTS vw_pm_counter_agg_by_time_ani_counter;
@@ -9,6 +20,10 @@ DROP VIEW IF EXISTS vw_pm_counts_by_source_file;
 DROP VIEW IF EXISTS vw_kpi_scope_entity_counter_base;
 DROP VIEW IF EXISTS vw_pm_daily_combined_ltefdd_coverage;
 DROP VIEW IF EXISTS vw_pm_daily_family_coverage;
+DROP VIEW IF EXISTS vw_pm_region_coverage;
+DROP VIEW IF EXISTS vw_pm_site_coverage;
+DROP VIEW IF EXISTS vw_pm_raw_with_entity_topology;
+DROP VIEW IF EXISTS vw_pm_entity_topology_projection;
 DROP VIEW IF EXISTS vw_file_lifecycle_exceptions;
 DROP VIEW IF EXISTS vw_file_ingest_observability;
 DROP VIEW IF EXISTS vw_pm_combined_ltefdd_cell_coverage_timeline;
@@ -499,6 +514,84 @@ GROUP BY collect_date;
 
 COMMENT ON VIEW vw_pm_daily_combined_ltefdd_coverage IS
     'Daily combined LTEFDD cell-level coverage summary across the two empirically cell-level families.';
+
+CREATE OR REPLACE VIEW vw_pm_entity_topology_projection AS
+SELECT
+    e.logical_entity_key,
+    e.dataset_family,
+    e.entity_level,
+    t.site_code,
+    t.site_name,
+    t.region_code,
+    t.region_name,
+    t.reporting_key,
+    t.reporting_name,
+    t.reporting_level,
+    t.mapping_status
+FROM ref_lte_entity_identity AS e
+LEFT JOIN ref_lte_entity_topology_enrichment AS t
+    ON t.logical_entity_key = e.logical_entity_key;
+
+COMMENT ON VIEW vw_pm_entity_topology_projection IS
+    'Curated topology projection layered on top of deterministic logical entity identity.';
+
+CREATE OR REPLACE VIEW vw_pm_raw_with_entity_topology AS
+SELECT
+    r.*,
+    t.site_code,
+    t.site_name,
+    t.region_code,
+    t.region_name,
+    t.reporting_key,
+    t.reporting_name,
+    t.reporting_level,
+    t.mapping_status
+FROM vw_pm_raw_with_entity AS r
+LEFT JOIN vw_pm_entity_topology_projection AS t
+    ON t.logical_entity_key = r.logical_entity_key;
+
+COMMENT ON VIEW vw_pm_raw_with_entity_topology IS
+    'Raw entity-aware fact rows enriched with curated topology dimensions where mappings are available.';
+
+CREATE OR REPLACE VIEW vw_pm_site_coverage AS
+SELECT
+    site_code,
+    site_name,
+    region_code,
+    region_name,
+    dataset_family,
+    COUNT(DISTINCT logical_entity_key) AS distinct_logical_entities,
+    COUNT(DISTINCT collect_time) AS distinct_collect_times,
+    COUNT(*) AS row_count
+FROM vw_pm_raw_with_entity_topology
+WHERE site_code IS NOT NULL
+GROUP BY
+    site_code,
+    site_name,
+    region_code,
+    region_name,
+    dataset_family;
+
+COMMENT ON VIEW vw_pm_site_coverage IS
+    'Coverage summary by curated site dimension and dataset family.';
+
+CREATE OR REPLACE VIEW vw_pm_region_coverage AS
+SELECT
+    region_code,
+    region_name,
+    dataset_family,
+    COUNT(DISTINCT logical_entity_key) AS distinct_logical_entities,
+    COUNT(DISTINCT collect_time) AS distinct_collect_times,
+    COUNT(*) AS row_count
+FROM vw_pm_raw_with_entity_topology
+WHERE region_code IS NOT NULL
+GROUP BY
+    region_code,
+    region_name,
+    dataset_family;
+
+COMMENT ON VIEW vw_pm_region_coverage IS
+    'Coverage summary by curated region dimension and dataset family.';
 
 CREATE OR REPLACE VIEW vw_kpi_scope_entity_counter_base AS
 SELECT

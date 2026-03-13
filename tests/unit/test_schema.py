@@ -107,4 +107,4 @@ def test_initialize_schema_rolls_back_failed_file_and_names_it(
         schema.initialize_schema(connection)  # type: ignore[arg-type]
 
     assert connection.rollbacks == 1
-    assert connection.commits == 3
+    assert connection.commits == 4

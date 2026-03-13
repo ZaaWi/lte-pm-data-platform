@@ -18,6 +18,8 @@ class FakeFTP:
         self.cwd_path: str | None = None
         self.quit_called = False
         self.closed = False
+        self.sizes: dict[str, int] = {}
+        self.mdtm: dict[str, str] = {}
 
     def connect(self, host: str, port: int) -> None:
         self.connected = (host, port)
@@ -37,6 +39,17 @@ class FakeFTP:
     def retrbinary(self, command: str, callback) -> None:  # noqa: ANN001
         remote_filename = command.removeprefix("RETR ")
         callback(self.payloads[remote_filename])
+
+    def size(self, remote_filename: str) -> int | None:
+        if remote_filename not in self.sizes:
+            raise RuntimeError("SIZE not available")
+        return self.sizes[remote_filename]
+
+    def sendcmd(self, command: str) -> str:
+        remote_filename = command.removeprefix("MDTM ")
+        if remote_filename not in self.mdtm:
+            raise RuntimeError("MDTM not available")
+        return self.mdtm[remote_filename]
 
     def quit(self) -> None:
         self.quit_called = True
@@ -113,6 +126,19 @@ def test_list_candidate_details_applies_latest_only_policy() -> None:
         ("UMEID_ITBBU_LTEFDD_PM_COMMON_ZTE_20260305_1015_R1.tar.gz", 1),
         ("UMEID_ITBBU_LTEFDD_PM_COMMON_ZTE_20260305_1030.tar.gz", 0),
     ]
+
+
+def test_list_candidate_details_populates_remote_metadata_when_available() -> None:
+    filename = "UMEID_ITBBU_LTEFDD_PM_COMMON_ZTE_20260305_1015.tar.gz"
+    fake_ftp = FakeFTP(names=[filename])
+    fake_ftp.sizes[filename] = 12345
+    fake_ftp.mdtm[filename] = "213 20260305102030"
+    client = build_client(fake_ftp)
+
+    candidates = client.list_candidate_details()
+
+    assert candidates[0].remote_size_bytes == 12345
+    assert candidates[0].remote_modified_at == datetime(2026, 3, 5, 10, 20, 30)
 
 
 def test_download_file_writes_to_local_path(tmp_path: Path) -> None:

@@ -18,3 +18,12 @@ data/rejected/*
 !data/reference/counter_reference_seed_template.csv
 
 *.egg-info/
+
+
+*.xls
+extracted_*.csv
+
+data/reference/proposed_*
+data/reference/provisional_*
+
+*.tmp

@@ -12,8 +12,11 @@ from lte_pm_platform.db.connection import get_connection
 from lte_pm_platform.db.repositories.counter_reference_repository import CounterReferenceRepository
 from lte_pm_platform.db.repositories.entity_reference_repository import EntityReferenceRepository
 from lte_pm_platform.db.repositories.file_audit_repository import FileAuditRepository
+from lte_pm_platform.db.repositories.ftp_remote_file_repository import FtpRemoteFileRepository
 from lte_pm_platform.db.repositories.kpi_repository import KpiRepository
 from lte_pm_platform.db.repositories.pm_sample_repository import PmSampleRepository
+from lte_pm_platform.db.repositories.semantic_kpi_repository import SemanticKpiRepository
+from lte_pm_platform.db.repositories.topology_reference_repository import TopologyReferenceRepository
 from lte_pm_platform.db.schema import initialize_schema
 from lte_pm_platform.pipeline.ingest.counter_reference_seed import load_counter_reference_seed
 from lte_pm_platform.pipeline.ingest.file_discovery import (
@@ -23,8 +26,36 @@ from lte_pm_platform.pipeline.ingest.file_discovery import (
 )
 from lte_pm_platform.pipeline.ingest.ftp_client import FtpClient
 from lte_pm_platform.pipeline.loaders.postgres_loader import PostgresLoader
+from lte_pm_platform.pipeline.orchestration.ftp_staged_flow import (
+    build_operational_status,
+    download_registry_files,
+    fetch_via_staged_flow,
+    ingest_registry_files,
+    inspect_failure_row,
+    inspect_failure_rows,
+    reconcile_registry_rows,
+    retry_download_registry_files,
+    retry_ingest_registry_files,
+    run_locked_ftp_cycle,
+    scan_remote_files,
+)
+from lte_pm_platform.pipeline.orchestration.run_lock import PipelineCycleLockError
 from lte_pm_platform.pipeline.orchestration.sample_pipeline import SamplePipeline
-from lte_pm_platform.utils.paths import data_input_dir, ftp_download_dir
+from lte_pm_platform.pipeline.orchestration.semantic_kpi import (
+    load_counter_dictionary,
+    load_kpi_definitions,
+)
+from lte_pm_platform.pipeline.orchestration.topology_enrichment import (
+    load_topology_entity_site_map,
+    load_topology_regions,
+    load_topology_reporting,
+    load_topology_sites,
+    sync_topology_enrichment,
+)
+from lte_pm_platform.pipeline.orchestration.vendor_indicator_semantics import (
+    load_vendor_indicator_seed_file,
+)
+from lte_pm_platform.utils.paths import data_input_dir, ftp_cycle_lock_path, ftp_download_dir
 
 app = typer.Typer(help="LTE PM CLI")
 ZIP_OPTION = typer.Option(..., exists=True, dir_okay=False, readable=True)
@@ -40,6 +71,9 @@ REVISION_POLICY_OPTION = typer.Option(
     help="Revision policy: additive, base-only, revisions-only, latest-only",
 )
 FAMILY_OPTION = typer.Option(None, "--family", help="Repeat to limit to specific dataset families")
+FTP_SOURCE_NAME = "default"
+FTP_REGISTRY_ID_OPTION = typer.Option(None, "--id", help="Registry row id")
+FTP_REGISTRY_IDS_OPTION = typer.Option(None, "--id", help="Repeat --id for registry row ids")
 
 
 def parse_interval_option(value: str | None) -> tuple[datetime | None, bool]:
@@ -190,6 +224,61 @@ def sync_entities() -> None:
     typer.echo(json.dumps({"rows_synced": count, "audits_updated": audits_updated}, indent=2))
 
 
+@app.command("load-topology-regions")
+def load_topology_regions_command(csv: Path = CSV_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        payload = load_topology_regions(
+            repository=TopologyReferenceRepository(connection),
+            csv_path=csv,
+        )
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("load-topology-sites")
+def load_topology_sites_command(csv: Path = CSV_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        payload = load_topology_sites(
+            repository=TopologyReferenceRepository(connection),
+            csv_path=csv,
+        )
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("load-topology-reporting")
+def load_topology_reporting_command(csv: Path = CSV_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        payload = load_topology_reporting(
+            repository=TopologyReferenceRepository(connection),
+            csv_path=csv,
+        )
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("load-topology-entity-map")
+def load_topology_entity_map_command(csv: Path = CSV_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        payload = load_topology_entity_site_map(
+            repository=TopologyReferenceRepository(connection),
+            csv_path=csv,
+        )
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("sync-topology")
+def sync_topology() -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        payload = sync_topology_enrichment(
+            repository=TopologyReferenceRepository(connection),
+        )
+        connection.commit()
+    typer.echo(json.dumps(payload, indent=2))
+
+
 @app.command("show-counter")
 def show_counter(counter_id: str = COUNTER_ID_OPTION) -> None:
     settings = get_settings()
@@ -205,6 +294,255 @@ def load_counter_reference(csv: Path = CSV_OPTION) -> None:
     with get_connection(settings) as connection:
         inserted = CounterReferenceRepository(connection).upsert_many(seed_rows)
     typer.echo(json.dumps({"rows_loaded": inserted, "csv": str(csv)}, indent=2))
+
+
+@app.command("load-counter-dictionary")
+def load_counter_dictionary_command(csv: Path = CSV_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        payload = load_counter_dictionary(
+            repository=SemanticKpiRepository(connection),
+            csv_path=csv,
+        )
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("load-kpi-definitions")
+def load_kpi_definitions_command(csv: Path = CSV_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        payload = load_kpi_definitions(
+            repository=SemanticKpiRepository(connection),
+            csv_path=csv,
+        )
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("load-vendor-indicator-seed")
+def load_vendor_indicator_seed_command(csv: Path = CSV_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        payload = load_vendor_indicator_seed_file(
+            repository=SemanticKpiRepository(connection),
+            csv_path=csv,
+        )
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("list-unmapped-entities")
+def list_unmapped_entities(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = TopologyReferenceRepository(connection).list_unmapped_entities(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("summarize-site-coverage")
+def summarize_site_coverage(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = TopologyReferenceRepository(connection).summarize_site_coverage(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("summarize-region-coverage")
+def summarize_region_coverage(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = TopologyReferenceRepository(connection).summarize_region_coverage(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-unmapped-counters")
+def list_unmapped_counters(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_unmapped_counters(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-provisional-kpis")
+def list_provisional_kpis(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_provisional_kpis(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("summarize-kpi-input-coverage")
+def summarize_kpi_input_coverage(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).summarize_kpi_input_coverage(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-prb-kpi-outputs")
+def list_verified_prb_kpi_outputs(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_prb_kpi_outputs(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("summarize-verified-prb-kpi-execution")
+def summarize_verified_prb_kpi_execution(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).summarize_verified_prb_kpi_execution(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-bler-kpi-outputs")
+def list_verified_bler_kpi_outputs(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_bler_kpi_outputs(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("summarize-verified-bler-kpi-execution")
+def summarize_verified_bler_kpi_execution(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).summarize_verified_bler_kpi_execution(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-prb-kpi-entity-time")
+def list_verified_prb_kpi_entity_time(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_prb_kpi_outputs(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-bler-kpi-entity-time")
+def list_verified_bler_kpi_entity_time(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_bler_kpi_outputs(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-rrc-kpi-entity-time")
+def list_verified_rrc_kpi_entity_time(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_rrc_kpi_entity_time(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-prb-kpi-site-time")
+def list_verified_prb_kpi_site_time(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_prb_kpi_site_time(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-bler-kpi-site-time")
+def list_verified_bler_kpi_site_time(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_bler_kpi_site_time(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-rrc-kpi-site-time")
+def list_verified_rrc_kpi_site_time(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_rrc_kpi_site_time(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-prb-kpi-region-time")
+def list_verified_prb_kpi_region_time(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_prb_kpi_region_time(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-bler-kpi-region-time")
+def list_verified_bler_kpi_region_time(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_bler_kpi_region_time(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-verified-rrc-kpi-region-time")
+def list_verified_rrc_kpi_region_time(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_verified_rrc_kpi_region_time(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("validate-verified-rrc-kpi-entity-time")
+def validate_verified_rrc_kpi_entity_time() -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).validate_verified_rrc_kpi_entity_time()
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("validate-verified-prb-kpi-site-time")
+def validate_verified_prb_kpi_site_time() -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).validate_verified_prb_kpi_site_time()
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("validate-verified-bler-kpi-site-time")
+def validate_verified_bler_kpi_site_time() -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).validate_verified_bler_kpi_site_time()
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("validate-verified-rrc-kpi-site-time")
+def validate_verified_rrc_kpi_site_time() -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).validate_verified_rrc_kpi_site_time()
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("validate-verified-prb-kpi-region-time")
+def validate_verified_prb_kpi_region_time() -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).validate_verified_prb_kpi_region_time()
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("validate-verified-bler-kpi-region-time")
+def validate_verified_bler_kpi_region_time() -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).validate_verified_bler_kpi_region_time()
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("validate-verified-rrc-kpi-region-time")
+def validate_verified_rrc_kpi_region_time() -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).validate_verified_rrc_kpi_region_time()
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("list-vendor-indicators")
+def list_vendor_indicators(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        rows = SemanticKpiRepository(connection).list_vendor_indicators(limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
 
 
 @app.command("summarize-files")
@@ -482,34 +820,341 @@ def ftp_fetch(
     settings = get_settings()
     client = get_ftp_client()
     window_start, window_end = parse_time_window(start, end)
-    candidates = client.list_candidate_details(
-        start=window_start,
-        end=window_end,
-        revision_policy=parse_revision_policy(revision_policy),
-    )[:limit]
     download_dir = ftp_download_dir()
-    results: list[dict[str, object]] = []
 
     with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
         pipeline = SamplePipeline(
             loader=PostgresLoader(connection),
             audit_repository=FileAuditRepository(connection),
         )
-        for candidate in candidates:
-            local_path = client.download_file(candidate.filename, download_dir)
-            summary = pipeline.load_zip(local_path, trigger_type="ftp_fetch", source_type="ftp")
-            results.append(
-                {
-                    "remote_file": candidate.filename,
-                    "dataset_family": candidate.dataset_family,
-                    "interval_start": candidate.interval_start.strftime("%Y-%m-%d %H:%M:%S"),
-                    "revision": candidate.revision,
-                    "downloaded_to": str(local_path),
-                    "ingest_summary": summary.as_dict(),
-                }
-            )
+        payload = fetch_via_staged_flow(
+            repository=repository,
+            client=client,
+            pipeline=pipeline,
+            source_name=FTP_SOURCE_NAME,
+            remote_directory=settings.ftp_remote_directory,
+            download_dir=download_dir,
+            start=window_start,
+            end=window_end,
+            revision_policy=parse_revision_policy(revision_policy),
+            limit=limit,
+            trigger_type="ftp_fetch",
+            source_type="ftp",
+        )
+        connection.commit()
 
-    typer.echo(json.dumps({"count": len(results), "results": results}, indent=2))
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@app.command("ftp-run-cycle")
+def ftp_run_cycle(
+    limit: int = LIMIT_OPTION,
+    start: str | None = START_OPTION,
+    end: str | None = END_OPTION,
+    revision_policy: str = REVISION_POLICY_OPTION,
+    family: list[str] | None = FAMILY_OPTION,
+    retry_failed: bool = typer.Option(
+        False,
+        "--retry-failed",
+        help="Retry failures encountered during this cycle",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what the cycle would do without mutating registry or files",
+    ),
+) -> None:
+    settings = get_settings()
+    client = get_ftp_client()
+    window_start, window_end = parse_time_window(start, end)
+    download_dir = ftp_download_dir()
+
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        pipeline = SamplePipeline(
+            loader=PostgresLoader(connection),
+            audit_repository=FileAuditRepository(connection),
+        )
+        try:
+            payload = run_locked_ftp_cycle(
+                lock_path=ftp_cycle_lock_path(),
+                repository=repository,
+                client=client,
+                pipeline=pipeline,
+                source_name=FTP_SOURCE_NAME,
+                remote_directory=settings.ftp_remote_directory,
+                download_dir=download_dir,
+                start=window_start,
+                end=window_end,
+                revision_policy=parse_revision_policy(revision_policy),
+                limit=limit,
+                families=family,
+                retry_failed=retry_failed,
+                dry_run=dry_run,
+                trigger_type="ftp_run_cycle",
+                source_type="ftp",
+            )
+        except PipelineCycleLockError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        if not dry_run:
+            connection.commit()
+
+    typer.echo(json.dumps(payload, indent=2, default=str))
+
+
+@app.command("ftp-scan")
+def ftp_scan(
+    start: str | None = START_OPTION,
+    end: str | None = END_OPTION,
+    revision_policy: str = REVISION_POLICY_OPTION,
+) -> None:
+    settings = get_settings()
+    client = get_ftp_client()
+    window_start, window_end = parse_time_window(start, end)
+    candidates = client.list_candidate_details(
+        start=window_start,
+        end=window_end,
+        revision_policy=parse_revision_policy(revision_policy),
+    )
+
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        result = scan_remote_files(
+            repository=repository,
+            client=client,
+            source_name=FTP_SOURCE_NAME,
+            remote_directory=settings.ftp_remote_directory,
+            start=window_start,
+            end=window_end,
+            revision_policy=parse_revision_policy(revision_policy),
+        )
+        summary = result["summary"]
+        candidates = result["candidates"]
+        connection.commit()
+
+    typer.echo(
+        json.dumps(
+            {
+                "count": len(candidates),
+                "summary": summary,
+                "files": [candidate.as_dict() for candidate in candidates],
+            },
+            indent=2,
+        )
+    )
+
+
+@app.command("ftp-download")
+def ftp_download(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    client = get_ftp_client()
+    download_dir = ftp_download_dir()
+    results: list[dict[str, object]] = []
+
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        results = download_registry_files(
+            repository=repository,
+            client=client,
+            source_name=FTP_SOURCE_NAME,
+            download_dir=download_dir,
+            limit=limit,
+        )
+        connection.commit()
+
+    public_results = []
+    for result in results:
+        row = {
+            "remote_path": result["remote_path"],
+            "status": result["status"],
+        }
+        if "local_staged_path" in result:
+            row["local_staged_path"] = result["local_staged_path"]
+        if "error" in result:
+            row["error"] = result["error"]
+        public_results.append(row)
+
+    typer.echo(json.dumps({"count": len(public_results), "results": public_results}, indent=2))
+
+
+@app.command("ftp-ingest")
+def ftp_ingest(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    results: list[dict[str, object]] = []
+
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        pipeline = SamplePipeline(
+            loader=PostgresLoader(connection),
+            audit_repository=FileAuditRepository(connection),
+        )
+        results = ingest_registry_files(
+            repository=repository,
+            pipeline=pipeline,
+            source_name=FTP_SOURCE_NAME,
+            limit=limit,
+            trigger_type="ftp_stage_ingest",
+            source_type="ftp",
+        )
+        connection.commit()
+
+    public_results = []
+    for result in results:
+        row = {
+            "remote_path": result["remote_path"],
+            "status": result["status"],
+        }
+        if "file_hash" in result:
+            row["file_hash"] = result["file_hash"]
+        if "ingest_run_id" in result:
+            row["ingest_run_id"] = result["ingest_run_id"]
+        if "final_file_path" in result:
+            row["final_file_path"] = result["final_file_path"]
+        if "error" in result:
+            row["error"] = result["error"]
+        public_results.append(row)
+
+    typer.echo(json.dumps({"count": len(public_results), "results": public_results}, indent=2))
+
+
+@app.command("ftp-status")
+def ftp_status(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        payload = build_operational_status(repository=repository, limit=limit)
+
+    typer.echo(
+        json.dumps(
+            payload,
+            indent=2,
+            default=str,
+        )
+    )
+
+
+@app.command("ftp-failures")
+def ftp_failures(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        rows = inspect_failure_rows(repository=repository, limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
+
+
+@app.command("ftp-failure-show")
+def ftp_failure_show(remote_file_id: int = typer.Option(..., "--id", min=1)) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        row = inspect_failure_row(repository=repository, remote_file_id=remote_file_id)
+    if row is None:
+        raise typer.BadParameter(f"FTP registry row not found: {remote_file_id}")
+    typer.echo(json.dumps(row, indent=2, default=str))
+
+
+@app.command("ftp-retry-download")
+def ftp_retry_download(
+    ids: list[int] = typer.Option(..., "--id", min=1, help="Repeat --id for failed download rows"),
+) -> None:
+    settings = get_settings()
+    client = get_ftp_client()
+    download_dir = ftp_download_dir()
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        payload = retry_download_registry_files(
+            repository=repository,
+            client=client,
+            source_name=FTP_SOURCE_NAME,
+            download_dir=download_dir,
+            remote_file_ids=ids,
+        )
+        connection.commit()
+    public_results = []
+    for result in payload["results"]:
+        row = {
+            "remote_path": result["remote_path"],
+            "status": result["status"],
+        }
+        if "local_staged_path" in result:
+            row["local_staged_path"] = result["local_staged_path"]
+        if "error" in result:
+            row["error"] = result["error"]
+        public_results.append(row)
+    typer.echo(
+        json.dumps(
+            {
+                "requested_ids": payload["requested_ids"],
+                "processed_ids": payload["processed_ids"],
+                "not_retryable_ids": payload["not_retryable_ids"],
+                "count": len(public_results),
+                "results": public_results,
+            },
+            indent=2,
+        )
+    )
+
+
+@app.command("ftp-retry-ingest")
+def ftp_retry_ingest(
+    ids: list[int] = typer.Option(..., "--id", min=1, help="Repeat --id for failed ingest rows"),
+) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        pipeline = SamplePipeline(
+            loader=PostgresLoader(connection),
+            audit_repository=FileAuditRepository(connection),
+        )
+        payload = retry_ingest_registry_files(
+            repository=repository,
+            pipeline=pipeline,
+            source_name=FTP_SOURCE_NAME,
+            trigger_type="ftp_stage_ingest",
+            source_type="ftp",
+            remote_file_ids=ids,
+        )
+        connection.commit()
+    public_results = []
+    for result in payload["results"]:
+        row = {
+            "remote_path": result["remote_path"],
+            "status": result["status"],
+        }
+        if "classification" in result:
+            row["classification"] = result["classification"]
+        if "file_hash" in result:
+            row["file_hash"] = result["file_hash"]
+        if "ingest_run_id" in result:
+            row["ingest_run_id"] = result["ingest_run_id"]
+        if "final_file_path" in result:
+            row["final_file_path"] = result["final_file_path"]
+        if "error" in result:
+            row["error"] = result["error"]
+        public_results.append(row)
+    typer.echo(
+        json.dumps(
+            {
+                "requested_ids": payload["requested_ids"],
+                "processed_ids": payload["processed_ids"],
+                "not_retryable_ids": payload["not_retryable_ids"],
+                "count": len(public_results),
+                "results": public_results,
+            },
+            indent=2,
+        )
+    )
+
+
+@app.command("ftp-reconcile")
+def ftp_reconcile(limit: int = LIMIT_OPTION) -> None:
+    settings = get_settings()
+    with get_connection(settings) as connection:
+        repository = FtpRemoteFileRepository(connection)
+        rows = reconcile_registry_rows(repository=repository, limit=limit)
+    typer.echo(json.dumps({"count": len(rows), "rows": rows}, indent=2, default=str))
 
 
 @app.command("local-list")

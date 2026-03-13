@@ -10,6 +10,7 @@ SQL_INIT_ORDER = (
     "001_extensions.sql",
     "002_tables_raw.sql",
     "003_tables_audit.sql",
+    "003a_tables_ftp_registry.sql",
     "004_reference_tables.sql",
     "006_kpi_foundation.sql",
     "008_kpi_counter_mapping.sql",

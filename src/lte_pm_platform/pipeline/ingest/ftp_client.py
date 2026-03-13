@@ -86,12 +86,30 @@ class FtpClient:
         end: datetime | None = None,
         revision_policy: RevisionPolicy = "additive",
     ) -> list[ParsedArchiveFile]:
-        return select_parsed_files(
-            self.list_files(),
-            start=start,
-            end=end,
-            revision_policy=revision_policy,
-        )
+        with self.session() as ftp:
+            filenames = sorted(ftp.nlst())
+            parsed_candidates = select_parsed_files(
+                filenames,
+                start=start,
+                end=end,
+                revision_policy=revision_policy,
+            )
+            candidates_with_metadata: list[ParsedArchiveFile] = []
+            for candidate in parsed_candidates:
+                metadata = self._read_remote_metadata(ftp, candidate.path)
+                candidates_with_metadata.append(
+                    ParsedArchiveFile(
+                        dataset_family=candidate.dataset_family,
+                        filename=candidate.filename,
+                        interval_start=candidate.interval_start,
+                        revision=candidate.revision,
+                        extension=candidate.extension,
+                        path=candidate.path,
+                        remote_size_bytes=metadata["remote_size_bytes"],
+                        remote_modified_at=metadata["remote_modified_at"],
+                    )
+                )
+            return candidates_with_metadata
 
     def download_file(self, remote_filename: str, local_dir: Path) -> Path:
         local_dir.mkdir(parents=True, exist_ok=True)
@@ -112,3 +130,29 @@ class FtpClient:
                 temp_path.unlink()
             raise
         return local_path
+
+    def _read_remote_metadata(self, ftp: FTP, remote_filename: str) -> dict[str, int | datetime | None]:
+        return {
+            "remote_size_bytes": self._read_remote_size(ftp, remote_filename),
+            "remote_modified_at": self._read_remote_modified_at(ftp, remote_filename),
+        }
+
+    def _read_remote_size(self, ftp: FTP, remote_filename: str) -> int | None:
+        try:
+            size = ftp.size(remote_filename)
+        except Exception:
+            return None
+        return int(size) if size is not None else None
+
+    def _read_remote_modified_at(self, ftp: FTP, remote_filename: str) -> datetime | None:
+        try:
+            response = ftp.sendcmd(f"MDTM {remote_filename}")
+        except Exception:
+            return None
+        if not response.startswith("213 "):
+            return None
+        timestamp = response.removeprefix("213 ").strip()
+        try:
+            return datetime.strptime(timestamp, "%Y%m%d%H%M%S")
+        except ValueError:
+            return None
