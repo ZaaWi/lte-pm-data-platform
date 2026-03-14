@@ -19,6 +19,8 @@ data/rejected/*
 
 *.egg-info/
 
+ui/node_modules/
+ui/dist/
 
 *.xls
 extracted_*.csv
@@ -27,3 +29,5 @@ data/reference/proposed_*
 data/reference/provisional_*
 
 *.tmp
+*.txt
+*.csv

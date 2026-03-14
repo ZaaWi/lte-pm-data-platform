@@ -49,6 +49,12 @@ CREATE INDEX IF NOT EXISTS idx_pm_ltefdd_sample_source_file
 CREATE INDEX IF NOT EXISTS idx_pm_ltefdd_sample_dataset_family
     ON pm_ltefdd_sample (dataset_family);
 
+CREATE INDEX IF NOT EXISTS idx_pm_ltefdd_sample_family_collect_time_counter
+    ON pm_ltefdd_sample (dataset_family, collect_time, counter_id);
+
+CREATE INDEX IF NOT EXISTS idx_pm_ltefdd_sample_family_counter_collect_time
+    ON pm_ltefdd_sample (dataset_family, counter_id, collect_time);
+
 CREATE INDEX IF NOT EXISTS idx_pm_ltefdd_sample_interval_start
     ON pm_ltefdd_sample (interval_start);
 

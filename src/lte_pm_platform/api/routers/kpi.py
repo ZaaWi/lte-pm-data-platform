@@ -15,6 +15,7 @@ router = APIRouter()
 def kpi_results_entity_time(
     family: KpiFamily,
     limit: int = 100,
+    offset: int = 0,
     dataset_family: str | None = None,
     collect_time_from: datetime | None = Query(default=None),
     collect_time_to: datetime | None = Query(default=None),
@@ -25,6 +26,7 @@ def kpi_results_entity_time(
             family=family,
             grain="entity-time",
             limit=limit,
+            offset=offset,
             dataset_family=dataset_family,
             site_code=None,
             region_code=None,
@@ -40,6 +42,7 @@ def kpi_results_entity_time(
 def kpi_results_site_time(
     family: KpiFamily,
     limit: int = 100,
+    offset: int = 0,
     dataset_family: str | None = None,
     site_code: str | None = None,
     collect_time_from: datetime | None = Query(default=None),
@@ -51,6 +54,7 @@ def kpi_results_site_time(
             family=family,
             grain="site-time",
             limit=limit,
+            offset=offset,
             dataset_family=dataset_family,
             site_code=site_code,
             region_code=None,
@@ -66,6 +70,7 @@ def kpi_results_site_time(
 def kpi_results_region_time(
     family: KpiFamily,
     limit: int = 100,
+    offset: int = 0,
     dataset_family: str | None = None,
     region_code: str | None = None,
     collect_time_from: datetime | None = Query(default=None),
@@ -77,6 +82,7 @@ def kpi_results_region_time(
             family=family,
             grain="region-time",
             limit=limit,
+            offset=offset,
             dataset_family=dataset_family,
             site_code=None,
             region_code=region_code,

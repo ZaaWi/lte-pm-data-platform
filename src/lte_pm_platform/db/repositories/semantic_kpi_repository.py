@@ -33,77 +33,31 @@ class SemanticKpiRepository:
         family: str,
         grain: str,
         limit: int = 100,
+        offset: int = 0,
         dataset_family: str | None = None,
         site_code: str | None = None,
         region_code: str | None = None,
         collect_time_from: datetime | None = None,
         collect_time_to: datetime | None = None,
     ) -> list[dict]:
+        if grain == "entity-time":
+            if dataset_family is None:
+                raise ValueError("dataset_family is required for entity-time KPI results")
+            collect_time_from, collect_time_to = self._normalize_entity_time_window(
+                dataset_family=dataset_family,
+                collect_time_from=collect_time_from,
+                collect_time_to=collect_time_to,
+            )
+            return self._list_verified_entity_time_results(
+                family=family,
+                dataset_family=dataset_family,
+                limit=limit,
+                offset=offset,
+                collect_time_from=collect_time_from,
+                collect_time_to=collect_time_to,
+            )
+
         query_specs: dict[tuple[str, str], tuple[str, str]] = {
-            (
-                "prb",
-                "entity-time",
-            ): (
-                """
-                SELECT
-                    kpi_code,
-                    kpi_name,
-                    dataset_family,
-                    collect_time,
-                    logical_entity_key,
-                    entity_level,
-                    site_code,
-                    region_code,
-                    numerator_counter_alias,
-                    denominator_counter_alias,
-                    numerator_value,
-                    denominator_value,
-                    kpi_value,
-                    unit
-                FROM vw_verified_prb_kpi_entity_time
-                """,
-                "ORDER BY collect_time DESC, kpi_code, dataset_family, logical_entity_key",
-            ),
-            (
-                "bler",
-                "entity-time",
-            ): (
-                """
-                SELECT
-                    kpi_code,
-                    kpi_name,
-                    dataset_family,
-                    collect_time,
-                    logical_entity_key,
-                    entity_level,
-                    site_code,
-                    region_code,
-                    numerator_counter_alias,
-                    denominator_counter_alias,
-                    numerator_value,
-                    denominator_value,
-                    kpi_value,
-                    unit
-                FROM vw_verified_bler_kpi_entity_time
-                """,
-                "ORDER BY collect_time DESC, kpi_code, dataset_family, logical_entity_key",
-            ),
-            (
-                "rrc",
-                "entity-time",
-            ): (
-                """
-                SELECT
-                    dataset_family,
-                    logical_entity_key,
-                    collect_time,
-                    rrc_connected_users_max,
-                    rrc_connected_users_mean,
-                    rrc_connected_users_online
-                FROM vw_verified_rrc_kpi_entity_time
-                """,
-                "ORDER BY collect_time DESC, dataset_family, logical_entity_key",
-            ),
             (
                 "prb",
                 "site-time",
@@ -215,8 +169,244 @@ class SemanticKpiRepository:
         if collect_time_to is not None:
             query += "\n  AND collect_time <= %s"
             params.append(collect_time_to)
-        query += f"\n{order_by}\nLIMIT %s"
+        query += f"\n{order_by}\nLIMIT %s\nOFFSET %s"
         params.append(limit)
+        params.append(offset)
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query, tuple(params))
+            return list(cursor.fetchall())
+
+    def _latest_collect_time(self, dataset_family: str) -> datetime | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT MAX(collect_time)
+                FROM pm_ltefdd_sample
+                WHERE dataset_family = %s
+                """,
+                (dataset_family,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return row[0]
+
+    def _normalize_entity_time_window(
+        self,
+        *,
+        dataset_family: str,
+        collect_time_from: datetime | None,
+        collect_time_to: datetime | None,
+    ) -> tuple[datetime | None, datetime | None]:
+        if collect_time_from is not None or collect_time_to is not None:
+            return collect_time_from, collect_time_to
+
+        latest_collect_time = self._latest_collect_time(dataset_family)
+        if latest_collect_time is None:
+            return None, None
+        return latest_collect_time, latest_collect_time
+
+    def _get_verified_counter_specs(
+        self,
+        *,
+        dataset_family: str,
+        aliases: Sequence[str],
+    ) -> list[dict]:
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    counter_id,
+                    counter_alias
+                FROM ref_semantic_counter_dictionary
+                WHERE dataset_family = %s
+                  AND counter_alias = ANY(%s)
+                  AND verification_status = 'VERIFIED'
+                ORDER BY counter_alias
+                """,
+                (dataset_family, list(aliases)),
+            )
+            return list(cursor.fetchall())
+
+    def _list_verified_entity_time_results(
+        self,
+        *,
+        family: str,
+        dataset_family: str,
+        limit: int,
+        offset: int,
+        collect_time_from: datetime | None,
+        collect_time_to: datetime | None,
+    ) -> list[dict]:
+        family_specs: dict[str, dict[str, object]] = {
+            "prb": {
+                "aliases": {
+                    "dl_prb_used": ("sum_counter_value", "dl_prb_used"),
+                    "dl_prb_available": ("sum_counter_value", "dl_prb_available"),
+                    "ul_prb_used": ("sum_counter_value", "ul_prb_used"),
+                    "ul_prb_available": ("sum_counter_value", "ul_prb_available"),
+                },
+                "select": """
+                    SELECT
+                        dataset_family,
+                        logical_entity_key,
+                        collect_time,
+                        entity_level,
+                        site_code,
+                        region_code,
+                        CASE
+                            WHEN dl_prb_available IS NULL OR dl_prb_available = 0 THEN NULL
+                            ELSE 100.0 * dl_prb_used / dl_prb_available
+                        END AS dl_prb_utilization,
+                        CASE
+                            WHEN ul_prb_available IS NULL OR ul_prb_available = 0 THEN NULL
+                            ELSE 100.0 * ul_prb_used / ul_prb_available
+                        END AS ul_prb_utilization
+                    FROM pivoted
+                    WHERE dl_prb_available IS NOT NULL
+                       OR ul_prb_available IS NOT NULL
+                    ORDER BY collect_time DESC, dataset_family, logical_entity_key
+                    LIMIT %s
+                    OFFSET %s
+                """,
+            },
+            "bler": {
+                "aliases": {
+                    "dl_tb_error_blocks": ("sum_counter_value", "dl_tb_error_blocks"),
+                    "dl_tb_total_blocks": ("sum_counter_value", "dl_tb_total_blocks"),
+                    "ul_tb_error_blocks": ("sum_counter_value", "ul_tb_error_blocks"),
+                    "ul_tb_total_blocks": ("sum_counter_value", "ul_tb_total_blocks"),
+                },
+                "select": """
+                    SELECT
+                        dataset_family,
+                        logical_entity_key,
+                        collect_time,
+                        entity_level,
+                        site_code,
+                        region_code,
+                        CASE
+                            WHEN dl_tb_total_blocks IS NULL OR dl_tb_total_blocks = 0 THEN NULL
+                            ELSE 100.0 * dl_tb_error_blocks / dl_tb_total_blocks
+                        END AS dl_bler,
+                        CASE
+                            WHEN ul_tb_total_blocks IS NULL OR ul_tb_total_blocks = 0 THEN NULL
+                            ELSE 100.0 * ul_tb_error_blocks / ul_tb_total_blocks
+                        END AS ul_bler
+                    FROM pivoted
+                    WHERE dl_tb_total_blocks IS NOT NULL
+                       OR ul_tb_total_blocks IS NOT NULL
+                    ORDER BY collect_time DESC, dataset_family, logical_entity_key
+                    LIMIT %s
+                    OFFSET %s
+                """,
+            },
+            "rrc": {
+                "aliases": {
+                    "max_rrc_connected_users": ("max_counter_value", "rrc_connected_users_max"),
+                    "mean_rrc_connected_users": ("avg_counter_value", "rrc_connected_users_mean"),
+                    "online_rrc_connected_users": ("sum_counter_value", "rrc_connected_users_online"),
+                },
+                "select": """
+                    SELECT
+                        dataset_family,
+                        logical_entity_key,
+                        collect_time,
+                        entity_level,
+                        site_code,
+                        region_code,
+                        rrc_connected_users_max,
+                        rrc_connected_users_mean,
+                        rrc_connected_users_online
+                    FROM pivoted
+                    WHERE rrc_connected_users_max IS NOT NULL
+                       OR rrc_connected_users_mean IS NOT NULL
+                       OR rrc_connected_users_online IS NOT NULL
+                    ORDER BY collect_time DESC, dataset_family, logical_entity_key
+                    LIMIT %s
+                    OFFSET %s
+                """,
+            },
+        }
+        alias_specs = family_specs[family]["aliases"]  # type: ignore[index]
+        aliases = tuple(alias_specs.keys())  # type: ignore[union-attr]
+        counter_specs = self._get_verified_counter_specs(
+            dataset_family=dataset_family,
+            aliases=aliases,
+        )
+        if not counter_specs:
+            return []
+        counter_ids = [row["counter_id"] for row in counter_specs]
+        counter_aliases = [row["counter_alias"] for row in counter_specs]
+
+        pivot_columns = []
+        for counter_alias, (value_column, result_alias) in alias_specs.items():  # type: ignore[union-attr]
+            pivot_columns.append(
+                f"MAX({value_column}) FILTER (WHERE counter_alias = '{counter_alias}') AS {result_alias}"
+            )
+
+        query = f"""
+            WITH selected_counters AS (
+                SELECT *
+                FROM unnest(%s::text[], %s::text[]) AS c(counter_id, counter_alias)
+            ),
+            filtered_inputs AS (
+                SELECT
+                    r.dataset_family,
+                    r.logical_entity_key,
+                    r.collect_time,
+                    r.entity_level,
+                    r.site_code,
+                    r.region_code,
+                    c.counter_alias,
+                    SUM(r.counter_value) AS sum_counter_value,
+                    AVG(r.counter_value) AS avg_counter_value,
+                    MAX(r.counter_value) AS max_counter_value
+                FROM vw_pm_raw_with_entity_topology AS r
+                JOIN selected_counters AS c
+                    ON c.counter_id = r.counter_id
+                WHERE r.dataset_family = %s
+                  AND r.counter_id = ANY(%s)
+        """
+        params: list[object] = [counter_ids, counter_aliases, dataset_family, counter_ids]
+        if collect_time_from is not None:
+            query += "\n                  AND r.collect_time >= %s"
+            params.append(collect_time_from)
+        if collect_time_to is not None:
+            query += "\n                  AND r.collect_time <= %s"
+            params.append(collect_time_to)
+
+        query += f"""
+                GROUP BY
+                    r.dataset_family,
+                    r.logical_entity_key,
+                    r.collect_time,
+                    r.entity_level,
+                    r.site_code,
+                    r.region_code,
+                    c.counter_alias
+            ),
+            pivoted AS (
+                SELECT
+                    dataset_family,
+                    logical_entity_key,
+                    collect_time,
+                    entity_level,
+                    site_code,
+                    region_code,
+                    {", ".join(pivot_columns)}
+                FROM filtered_inputs
+                GROUP BY
+                    dataset_family,
+                    logical_entity_key,
+                    collect_time,
+                    entity_level,
+                    site_code,
+                    region_code
+            )
+            {family_specs[family]["select"]}
+        """
+        params.extend([limit, offset])
         with self.connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(query, tuple(params))
             return list(cursor.fetchall())
@@ -227,6 +417,9 @@ class SemanticKpiRepository:
         family: str,
         grain: str,
     ) -> list[dict]:
+        if grain == "entity-time" and family in {"prb", "bler"}:
+            return self._list_fast_entity_time_validation(family=family)
+
         query_specs: dict[tuple[str, str], str] = {
             (
                 "prb",
@@ -351,6 +544,234 @@ class SemanticKpiRepository:
             """,
         }
         return self._fetch_rows(query_specs[(family, grain)])
+
+    def _get_entity_time_validation_input_specs(self, *, kpi_codes: Sequence[str]) -> list[dict]:
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    i.kpi_code,
+                    i.dataset_family,
+                    i.input_alias,
+                    c.counter_id,
+                    c.verification_status AS counter_verification_status
+                FROM ref_semantic_kpi_definition AS d
+                JOIN ref_semantic_kpi_formula_input AS i
+                    ON i.kpi_code = d.kpi_code
+                JOIN ref_semantic_counter_dictionary AS c
+                    ON c.dataset_family = i.dataset_family
+                   AND c.counter_alias = i.counter_alias
+                WHERE d.kpi_code = ANY(%s)
+                  AND d.verification_status = 'VERIFIED'
+                  AND i.required = TRUE
+                ORDER BY
+                    i.kpi_code,
+                    i.dataset_family,
+                    i.input_alias,
+                    c.counter_id
+                """,
+                (list(kpi_codes),),
+            )
+            return list(cursor.fetchall())
+
+    def _list_fast_entity_time_validation(self, *, family: str) -> list[dict]:
+        family_kpi_codes: dict[str, tuple[str, ...]] = {
+            "prb": ("dl_prb_utilization", "ul_prb_utilization"),
+            "bler": ("dl_bler", "ul_bler"),
+            # RRC can plug into the same path once its reference rows are loaded.
+            "rrc": (
+                "rrc_connected_users_max",
+                "rrc_connected_users_mean",
+                "rrc_connected_users_online",
+            ),
+        }
+        input_specs = self._get_entity_time_validation_input_specs(
+            kpi_codes=family_kpi_codes[family],
+        )
+        if not input_specs:
+            return []
+
+        grouped_specs: dict[str, list[dict]] = {}
+        for row in input_specs:
+            grouped_specs.setdefault(row["dataset_family"], []).append(row)
+
+        rows: list[dict] = []
+        for dataset_family, dataset_specs in grouped_specs.items():
+            entity_identity_expr = self._entity_identity_expr(dataset_family)
+            coverage_rows = self._fetch_entity_time_validation_coverage(
+                dataset_family=dataset_family,
+                dataset_specs=dataset_specs,
+                entity_identity_expr=entity_identity_expr,
+            )
+            executed_rows = self._fetch_entity_time_validation_executed(
+                dataset_family=dataset_family,
+                dataset_specs=dataset_specs,
+                entity_identity_expr=entity_identity_expr,
+            )
+
+            coverage_by_key = {
+                (row["kpi_code"], row["input_alias"]): row for row in coverage_rows
+            }
+            executed_by_kpi = {
+                row["kpi_code"]: row for row in executed_rows
+            }
+            grouped_kpis: dict[str, list[dict]] = {}
+            for spec in dataset_specs:
+                grouped_kpis.setdefault(spec["kpi_code"], []).append(spec)
+
+            for kpi_code, kpi_specs in grouped_kpis.items():
+                per_input_rows = [
+                    coverage_by_key.get((kpi_code, spec["input_alias"]))
+                    for spec in kpi_specs
+                    if coverage_by_key.get((kpi_code, spec["input_alias"])) is not None
+                ]
+                executed = executed_by_kpi.get(kpi_code)
+                rows.append(
+                    {
+                        "kpi_code": kpi_code,
+                        "dataset_family": dataset_family,
+                        "covered_input_aliases": len(per_input_rows),
+                        "min_counter_verification_status": min(
+                            spec["counter_verification_status"] for spec in kpi_specs
+                        ),
+                        "min_input_collect_times": min(
+                            row["distinct_collect_times"] for row in per_input_rows
+                        )
+                        if per_input_rows
+                        else None,
+                        "min_input_entities": min(
+                            row["distinct_entities"] for row in per_input_rows
+                        )
+                        if per_input_rows
+                        else None,
+                        "executed_rows": executed["executed_rows"] if executed is not None else 0,
+                        "executed_collect_times": executed["executed_collect_times"]
+                        if executed is not None
+                        else 0,
+                        "executed_entities": executed["executed_entities"] if executed is not None else 0,
+                    }
+                )
+
+        return sorted(rows, key=lambda row: (row["kpi_code"], row["dataset_family"]))
+
+    @staticmethod
+    def _entity_identity_expr(dataset_family: str) -> str:
+        if dataset_family == "PM/sdr/ltefdd":
+            return "ROW(s.sbnid, s.enodebid, s.cellid)"
+        if dataset_family == "PM/itbbu/ltefdd":
+            return "ROW(s.sbnid, s.enbid, s.cellid)"
+        return "ROW(s.sbnid, s.enbid, s.enodebid, s.cellid, s.meid, s.ani)"
+
+    def _fetch_entity_time_validation_coverage(
+        self,
+        *,
+        dataset_family: str,
+        dataset_specs: Sequence[dict],
+        entity_identity_expr: str,
+    ) -> list[dict]:
+        counter_ids = [row["counter_id"] for row in dataset_specs]
+        kpi_codes = [row["kpi_code"] for row in dataset_specs]
+        input_aliases = [row["input_alias"] for row in dataset_specs]
+        query = f"""
+            WITH selected_inputs AS (
+                SELECT *
+                FROM unnest(
+                    %s::text[],
+                    %s::text[],
+                    %s::text[]
+                ) AS si(counter_id, kpi_code, input_alias)
+            )
+            SELECT
+                si.kpi_code,
+                si.input_alias,
+                COUNT(DISTINCT s.collect_time) AS distinct_collect_times,
+                COUNT(DISTINCT {entity_identity_expr}) AS distinct_entities
+            FROM pm_ltefdd_sample AS s
+            JOIN selected_inputs AS si
+                ON si.counter_id = s.counter_id
+            WHERE s.dataset_family = %s
+              AND s.counter_id = ANY(%s)
+            GROUP BY
+                si.kpi_code,
+                si.input_alias
+            ORDER BY
+                si.kpi_code,
+                si.input_alias
+        """
+        params = (counter_ids, kpi_codes, input_aliases, dataset_family, sorted(set(counter_ids)))
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query, params)
+            return list(cursor.fetchall())
+
+    def _fetch_entity_time_validation_executed(
+        self,
+        *,
+        dataset_family: str,
+        dataset_specs: Sequence[dict],
+        entity_identity_expr: str,
+    ) -> list[dict]:
+        counter_ids = [row["counter_id"] for row in dataset_specs]
+        kpi_codes = [row["kpi_code"] for row in dataset_specs]
+        input_aliases = [row["input_alias"] for row in dataset_specs]
+        required_input_aliases = []
+        required_counts_by_kpi: dict[str, set[str]] = {}
+        for row in dataset_specs:
+            required_counts_by_kpi.setdefault(row["kpi_code"], set()).add(row["input_alias"])
+        normalized_required_counts = {
+            kpi_code: len(input_alias_set)
+            for kpi_code, input_alias_set in required_counts_by_kpi.items()
+        }
+        required_input_aliases = [normalized_required_counts[row["kpi_code"]] for row in dataset_specs]
+
+        query = f"""
+            WITH selected_inputs AS (
+                SELECT *
+                FROM unnest(
+                    %s::text[],
+                    %s::text[],
+                    %s::text[],
+                    %s::int[]
+                ) AS si(counter_id, kpi_code, input_alias, required_input_aliases)
+            )
+            SELECT
+                entity_inputs.kpi_code,
+                COUNT(*) AS executed_rows,
+                COUNT(DISTINCT entity_inputs.collect_time) AS executed_collect_times,
+                COUNT(DISTINCT entity_inputs.entity_key) AS executed_entities
+            FROM (
+                SELECT
+                    si.kpi_code,
+                    s.collect_time,
+                    {entity_identity_expr} AS entity_key,
+                    COUNT(DISTINCT si.input_alias) AS present_input_aliases,
+                    MAX(si.required_input_aliases) AS required_input_aliases
+                FROM pm_ltefdd_sample AS s
+                JOIN selected_inputs AS si
+                    ON si.counter_id = s.counter_id
+                WHERE s.dataset_family = %s
+                  AND s.counter_id = ANY(%s)
+                GROUP BY
+                    si.kpi_code,
+                    s.collect_time,
+                    {entity_identity_expr}
+                HAVING COUNT(DISTINCT si.input_alias) = MAX(si.required_input_aliases)
+            ) AS entity_inputs
+            GROUP BY
+                entity_inputs.kpi_code
+            ORDER BY
+                entity_inputs.kpi_code
+        """
+        params = (
+            counter_ids,
+            kpi_codes,
+            input_aliases,
+            required_input_aliases,
+            dataset_family,
+            sorted(set(counter_ids)),
+        )
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query, params)
+            return list(cursor.fetchall())
 
     def upsert_counter_dictionary(self, rows: Sequence[SemanticCounterDictionarySeedRow]) -> dict[str, int]:
         if not rows:

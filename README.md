@@ -32,20 +32,22 @@ Current implemented scope:
 - derive stable `logical_entity_key` values from real raw dimensions
 - materialize entity identity with a separate `sync-entities` step
 - support additive topology enrichment for site, region, and reporting-aware observability
+- expose explicit topology reference loaders and a rerunnable `sync-topology` step
 - support a curated semantic KPI framework layer driven by counter aliases rather than raw counter IDs
 - support a verified vendor-indicator semantic layer that captures indicator-to-raw-counter lineage
 - load semantic counter dictionaries and KPI definitions through explicit rerunnable CSV-driven commands
 - expose SQL views for semantic counter projection, KPI input coverage, unmapped counters, and provisional KPI definitions
-- execute verified KPI slices for PRB, BLER, and RRC at entity/time grain
-- expose explicit topology-aware verified KPI rollups at site/time and region/time grain
+- execute 7 verified KPIs across PRB, BLER, and direct-mapped RRC at entity/time grain
+- expose topology-aware verified KPI rollup views at site/time and region/time grain
 - expose validation and CLI inspection commands for the verified KPI stack across entity/site/region grains
+- expose a FastAPI API layer for health, ingestion, topology, KPI results, KPI validation, and manual operator actions
+- expose a minimal in-repo operator UI for Overview, Ingestion, KPI Results, Validation, and Topology
 - expose SQL views for ingest observability, lifecycle exceptions, coverage timelines, and daily coverage summaries
 
 Current out of scope:
 
 - multi-vendor support
 - external orchestration frameworks
-- API layer
 - throughput KPI rollout
 - bundled RRC accessibility KPI rollout
 - large-scale performance tuning beyond a working local engineering slice
@@ -57,6 +59,8 @@ Current out of scope:
 - SQL views and SQL-first analytics
 - Docker Compose
 - Typer CLI
+- FastAPI
+- Vite + TypeScript
 - psycopg
 - pytest
 - Ruff
@@ -66,16 +70,18 @@ Current out of scope:
 - Milestone 5: staged FTP pipeline and retry/reconciliation workflow -> completed
 - Scheduler-driven execution for the staged FTP pipeline -> completed
 - FTP remote metadata and operational controls -> completed
-- Entity / topology enrichment -> completed
+- Entity identity and topology enrichment flow -> completed
 - Semantic KPI framework foundation -> completed
 - Verified vendor indicator semantic layer -> completed
 - First verified PRB KPI slice execution -> completed
 - Verified BLER KPI slice execution -> completed
 - Verified RRC KPI slice execution -> completed
-- Verified KPI topology-aware site/time rollups -> completed
-- Verified KPI topology-aware region/time rollups -> completed
+- Verified KPI topology-aware site/time and region/time rollup views -> implemented
 - Verified KPI CLI inspection and validation layer -> completed
-- Active sub-milestone: Next verified KPI family review after PRB, BLER, and RRC
+- API and minimal operator UI baseline -> completed
+- Entity-time KPI Results stabilization -> completed
+- Entity-time KPI Validation stabilization for PRB/BLER -> completed
+- Active sub-milestone: topology reference-data loading and CM-driven topology mapping analysis
 
 ## Architecture
 
@@ -161,6 +167,8 @@ Topology enrichment is additive and explicit.
   - optional reporting hierarchy
 - enrichment is materialized by an explicit rerunnable `sync-topology` step
 - raw ingest and raw identity generation remain unchanged
+- meaningful site/region outputs require curated topology reference rows to be loaded first
+- in the current repo, the topology load commands exist, but the example curated CSV inputs referenced below are not bundled in `data/reference/`
 
 ### Semantic KPI Framework
 
@@ -183,6 +191,7 @@ Semantic KPI work is also additive and explicit.
 - separate verified KPI rollup views now exist for:
   - `site_time`
   - `region_time`
+- those rollup views are only meaningful after topology reference mappings are loaded and synced
 
 ### Verified KPI Views
 
@@ -215,6 +224,59 @@ Current verified KPI validation views include:
   - `vw_verified_prb_kpi_region_time_validation`
   - `vw_verified_bler_kpi_region_time_validation`
   - `vw_verified_rrc_kpi_region_time_validation`
+
+### API and Operator UI
+
+Implemented API baseline:
+
+- `GET /api/v1/health`
+- `GET /api/v1/ready`
+- ingestion reads:
+  - status
+  - failures
+  - reconciliation preview
+- topology reads:
+  - unmapped entities
+  - site coverage
+  - region coverage
+- KPI result reads:
+  - entity/time
+  - site/time
+  - region/time
+- KPI validation reads:
+  - entity/time
+  - site/time
+  - region/time
+- manual operator actions:
+  - FTP run cycle
+  - retry download
+  - retry ingest
+  - sync entities
+  - sync topology
+
+Implemented operator UI baseline:
+
+- Overview
+- Ingestion
+- KPI Results
+- Validation
+- Topology
+
+Current verified working operator paths:
+
+- API `health` / `ready`
+- ingestion status, failures, and reconciliation preview
+- topology unmapped/site/region coverage endpoints
+- KPI Results `entity-time` in the browser
+- KPI Validation `entity-time` for PRB and BLER
+
+Current operator-facing guardrails:
+
+- KPI Results `entity-time` requires `dataset_family`
+- if `entity-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
+- KPI Results date filters use date inputs and normalize to day bounds before calling the API
+- KPI Results supports minimal offset-based paging through `Rows`, `Previous`, and `Next`
+- `entity-time` KPI Results and PRB/BLER validation use optimized backend paths with early filtering and explicit counter narrowing
 
 ## Working Domain Hypothesis
 
@@ -356,6 +418,13 @@ python -m lte_pm_platform.cli summarize-site-coverage --limit 20
 python -m lte_pm_platform.cli summarize-region-coverage --limit 20
 ```
 
+Important local-dev note:
+
+- the commands above are implemented and rerunnable
+- the example CSV filenames are the expected inputs for local topology loading
+- those curated topology CSVs are not currently bundled in this repo
+- until they are provided and loaded, `sync-topology` will populate enrichment rows as `UNMAPPED`, and site/region KPI routes will remain empty or non-meaningful
+
 ### 6. Validate coverage over time
 
 ```bash
@@ -406,6 +475,8 @@ python -m lte_pm_platform.cli validate-verified-bler-kpi-region-time
 python -m lte_pm_platform.cli validate-verified-rrc-kpi-region-time
 ```
 
+Meaningful site/time and region/time KPI outputs depend on curated topology reference data being loaded and synced first.
+
 ### 9. Backfill old lifecycle rows if needed
 
 ```bash
@@ -423,7 +494,7 @@ python -m lte_pm_platform.cli ftp-failure-show --id 101
 python -m lte_pm_platform.cli ftp-reconcile --limit 20
 ```
 
-Run one scheduler-style FTP cycle:
+Run one manual FTP cycle:
 
 ```bash
 python -m lte_pm_platform.cli ftp-run-cycle --limit 20
@@ -584,11 +655,15 @@ ORDER BY collect_date;
 - raw fact persistence with real entity dimensions
 - entity normalization as a separate step
 - topology enrichment as a separate step
+- topology reference loading commands and sync flow
 - semantic KPI dictionary and KPI definition framework
 - SQL-first coverage and observability layer
-- verified KPI activation for PRB, BLER, and direct-mapped RRC slices
-- explicit topology-aware verified KPI rollups at site/time and region/time
+- verified KPI activation for 7 KPIs across PRB, BLER, and direct-mapped RRC slices
+- topology-aware verified KPI rollup views at site/time and region/time
 - validation views and CLI inspection commands for the verified KPI stack
+- API baseline for reads and manual operator actions
+- minimal operator UI baseline for inspection and manual control
+- entity-time KPI Results and PRB/BLER validation stabilized for local operator use
 - KPI execution remains gated by verified counter semantics for any new KPI family
 
 ### Future Scope
@@ -596,10 +671,13 @@ ORDER BY collect_date;
 - broader verified KPI families beyond PRB, BLER, and direct-mapped RRC
 - bundled RRC accessibility KPI rollout only after explicit review
 - throughput KPI rollout only after authoritative vendor evidence resolves provisional volume lineage
+- curated topology reference data packaging and loading workflow completion
+- CM-driven topology derivation and authoritative site/region/reporting mapping analysis
+- stabilization and optimization of site/time and region/time KPI paths after topology reference data is loaded
 - configurable local source roots and richer operational config
 - better bulk-loading performance for larger daily slices
 - broader enrichment around site/region/inventory data
-- API layer and broader operational expansion
+- deeper operator-platform expansion beyond the current baseline
 
 ## Development
 

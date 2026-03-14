@@ -21,6 +21,16 @@ class FakeCursor:
     def fetchall(self):  # noqa: ANN201
         return self.rows
 
+    def fetchone(self):  # noqa: ANN201
+        if not self.rows:
+            return None
+        first = self.rows[0]
+        if isinstance(first, tuple):
+            return first
+        if isinstance(first, dict):
+            return tuple(first.values())
+        return first
+
     def __enter__(self) -> "FakeCursor":
         return self
 
@@ -35,6 +45,21 @@ class FakeConnection:
 
     def cursor(self, **kwargs):  # noqa: ANN003, ANN201
         return self.cursor_obj
+
+    def commit(self) -> None:
+        self.commits += 1
+
+
+class MultiCursorConnection:
+    def __init__(self, cursor_rows) -> None:  # noqa: ANN001
+        self.cursors = [FakeCursor(rows) for rows in cursor_rows]
+        self.used_cursors: list[FakeCursor] = []
+        self.commits = 0
+
+    def cursor(self, **kwargs):  # noqa: ANN003, ANN201
+        cursor = self.cursors.pop(0)
+        self.used_cursors.append(cursor)
+        return cursor
 
     def commit(self) -> None:
         self.commits += 1
@@ -192,6 +217,221 @@ def test_validate_verified_rrc_kpi_entity_time_returns_rows() -> None:
 
     assert result == rows
     assert repository.connection.cursor_obj.executed[0][1] == ()
+
+
+def test_list_verified_kpi_results_entity_time_requires_latest_window_fast_path() -> None:
+    connection = MultiCursorConnection(
+        [
+            [("2026-03-05 00:30:00",)],
+            [
+                {"counter_id": "C373424609", "counter_alias": "dl_prb_available"},
+                {"counter_id": "C373424610", "counter_alias": "dl_prb_used"},
+                {"counter_id": "C373424608", "counter_alias": "ul_prb_used"},
+                {"counter_id": "C373424611", "counter_alias": "ul_prb_available"},
+            ],
+            [{"dataset_family": "PM/sdr/ltefdd", "dl_prb_utilization": 50.0}],
+        ]
+    )
+    repository = SemanticKpiRepository(connection)  # type: ignore[arg-type]
+
+    result = repository.list_verified_kpi_results(
+        family="prb",
+        grain="entity-time",
+        limit=50,
+        offset=0,
+        dataset_family="PM/sdr/ltefdd",
+        collect_time_from=None,
+        collect_time_to=None,
+    )
+
+    assert result == [{"dataset_family": "PM/sdr/ltefdd", "dl_prb_utilization": 50.0}]
+    latest_query, latest_params = connection.used_cursors[0].executed[0]
+    counter_query, counter_params = connection.used_cursors[1].executed[0]
+    result_query, result_params = connection.used_cursors[2].executed[0]
+
+    assert "SELECT MAX(collect_time)" in latest_query
+    assert latest_params == ("PM/sdr/ltefdd",)
+    assert "FROM ref_semantic_counter_dictionary" in counter_query
+    assert counter_params[0] == "PM/sdr/ltefdd"
+    assert "FROM vw_pm_raw_with_entity_topology AS r" in result_query
+    assert result_params[2] == "PM/sdr/ltefdd"
+    assert result_params[-2:] == (50, 0)
+
+
+def test_list_verified_kpi_results_site_time_applies_offset() -> None:
+    rows = [{"dataset_family": "PM/sdr/ltefdd", "site_code": "S1"}]
+    repository = SemanticKpiRepository(FakeConnection(rows))  # type: ignore[arg-type]
+
+    result = repository.list_verified_kpi_results(
+        family="prb",
+        grain="site-time",
+        limit=25,
+        offset=50,
+        dataset_family="PM/sdr/ltefdd",
+    )
+
+    assert result == rows
+    query, params = repository.connection.cursor_obj.executed[0]
+    assert "FROM vw_verified_prb_kpi_site_time" in query
+    assert "LIMIT %s\nOFFSET %s" in query
+    assert params[-2:] == (25, 50)
+
+
+def test_list_verified_kpi_validation_entity_time_uses_fast_path_for_prb() -> None:
+    connection = MultiCursorConnection(
+        [
+            [
+                {
+                    "kpi_code": "dl_prb_utilization",
+                    "dataset_family": "PM/sdr/ltefdd",
+                    "input_alias": "numerator",
+                    "counter_id": "C373424610",
+                    "counter_verification_status": "VERIFIED",
+                },
+                {
+                    "kpi_code": "dl_prb_utilization",
+                    "dataset_family": "PM/sdr/ltefdd",
+                    "input_alias": "denominator",
+                    "counter_id": "C373424611",
+                    "counter_verification_status": "VERIFIED",
+                },
+                {
+                    "kpi_code": "ul_prb_utilization",
+                    "dataset_family": "PM/sdr/ltefdd",
+                    "input_alias": "numerator",
+                    "counter_id": "C373424608",
+                    "counter_verification_status": "VERIFIED",
+                },
+                {
+                    "kpi_code": "ul_prb_utilization",
+                    "dataset_family": "PM/sdr/ltefdd",
+                    "input_alias": "denominator",
+                    "counter_id": "C373424609",
+                    "counter_verification_status": "VERIFIED",
+                },
+            ],
+            [
+                {
+                    "kpi_code": "dl_prb_utilization",
+                    "input_alias": "numerator",
+                    "distinct_collect_times": 2,
+                    "distinct_entities": 5458,
+                },
+                {
+                    "kpi_code": "dl_prb_utilization",
+                    "input_alias": "denominator",
+                    "distinct_collect_times": 2,
+                    "distinct_entities": 5458,
+                },
+            ],
+            [
+                {
+                    "kpi_code": "dl_prb_utilization",
+                    "executed_rows": 5458,
+                    "executed_collect_times": 2,
+                    "executed_entities": 5458,
+                }
+            ],
+        ]
+    )
+    repository = SemanticKpiRepository(connection)  # type: ignore[arg-type]
+
+    result = repository.list_verified_kpi_validation(family="prb", grain="entity-time")
+
+    assert result[0]["kpi_code"] == "dl_prb_utilization"
+    spec_query, spec_params = connection.used_cursors[0].executed[0]
+    coverage_query, coverage_params = connection.used_cursors[1].executed[0]
+    result_query, result_params = connection.used_cursors[2].executed[0]
+
+    assert "FROM ref_semantic_kpi_definition AS d" in spec_query
+    assert spec_params == (["dl_prb_utilization", "ul_prb_utilization"],)
+    assert "FROM pm_ltefdd_sample AS s" in coverage_query
+    assert "COUNT(DISTINCT s.collect_time)" in coverage_query
+    assert coverage_params[3] == "PM/sdr/ltefdd"
+    assert coverage_params[4] == ["C373424608", "C373424609", "C373424610", "C373424611"]
+    assert "FROM pm_ltefdd_sample AS s" in result_query
+    assert "FROM vw_verified_prb_kpi_execution_validation" not in result_query
+    assert result_params[4] == "PM/sdr/ltefdd"
+    assert result_params[5] == ["C373424608", "C373424609", "C373424610", "C373424611"]
+
+
+def test_list_verified_kpi_validation_entity_time_uses_fast_path_for_bler() -> None:
+    connection = MultiCursorConnection(
+        [
+            [
+                {
+                    "kpi_code": "dl_bler",
+                    "dataset_family": "PM/sdr/ltefdd",
+                    "input_alias": "numerator",
+                    "counter_id": "C373454800",
+                    "counter_verification_status": "VERIFIED",
+                },
+                {
+                    "kpi_code": "dl_bler",
+                    "dataset_family": "PM/sdr/ltefdd",
+                    "input_alias": "denominator",
+                    "counter_id": "C373454801",
+                    "counter_verification_status": "VERIFIED",
+                },
+                {
+                    "kpi_code": "ul_bler",
+                    "dataset_family": "PM/sdr/ltefdd",
+                    "input_alias": "numerator",
+                    "counter_id": "C373454802",
+                    "counter_verification_status": "VERIFIED",
+                },
+                {
+                    "kpi_code": "ul_bler",
+                    "dataset_family": "PM/sdr/ltefdd",
+                    "input_alias": "denominator",
+                    "counter_id": "C373454803",
+                    "counter_verification_status": "VERIFIED",
+                },
+            ],
+            [
+                {
+                    "kpi_code": "dl_bler",
+                    "input_alias": "numerator",
+                    "distinct_collect_times": 2,
+                    "distinct_entities": 5458,
+                },
+                {
+                    "kpi_code": "dl_bler",
+                    "input_alias": "denominator",
+                    "distinct_collect_times": 2,
+                    "distinct_entities": 5458,
+                },
+            ],
+            [
+                {
+                    "kpi_code": "dl_bler",
+                    "executed_rows": 5458,
+                    "executed_collect_times": 2,
+                    "executed_entities": 5458,
+                }
+            ],
+        ]
+    )
+    repository = SemanticKpiRepository(connection)  # type: ignore[arg-type]
+
+    result = repository.list_verified_kpi_validation(family="bler", grain="entity-time")
+
+    assert result[0]["kpi_code"] == "dl_bler"
+    spec_query, spec_params = connection.used_cursors[0].executed[0]
+    coverage_query, coverage_params = connection.used_cursors[1].executed[0]
+    result_query, result_params = connection.used_cursors[2].executed[0]
+
+    assert "FROM ref_semantic_kpi_definition AS d" in spec_query
+    assert spec_params == (["dl_bler", "ul_bler"],)
+    assert "FROM pm_ltefdd_sample AS s" in coverage_query
+    assert "COUNT(DISTINCT s.collect_time)" in coverage_query
+    assert coverage_params[3] == "PM/sdr/ltefdd"
+    assert coverage_params[4] == ["C373454800", "C373454801", "C373454802", "C373454803"]
+    assert "FROM pm_ltefdd_sample AS s" in result_query
+    assert "FROM vw_verified_bler_kpi_execution_validation" not in result_query
+    assert result_params[4] == "PM/sdr/ltefdd"
+    assert result_params[5] == ["C373454800", "C373454801", "C373454802", "C373454803"]
+
 
 
 def test_list_verified_prb_kpi_site_time_returns_rows() -> None:

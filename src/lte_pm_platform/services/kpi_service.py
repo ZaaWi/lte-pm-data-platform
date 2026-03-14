@@ -20,6 +20,7 @@ class KpiService:
         family: str,
         grain: str,
         limit: int,
+        offset: int,
         dataset_family: str | None,
         site_code: str | None,
         region_code: str | None,
@@ -28,10 +29,13 @@ class KpiService:
     ) -> list[dict]:
         self._validate_family(family)
         self._validate_grain(grain)
+        if grain == "entity-time" and not dataset_family:
+            raise ValueError("dataset_family is required for entity-time KPI results")
         return self.repository.list_verified_kpi_results(
             family=family,
             grain=grain,
             limit=limit,
+            offset=offset,
             dataset_family=dataset_family,
             site_code=site_code,
             region_code=region_code,
