@@ -31,6 +31,8 @@ class KpiService:
         self._validate_grain(grain)
         if grain == "entity-time" and not dataset_family:
             raise ValueError("dataset_family is required for entity-time KPI results")
+        if grain in {"site-time", "region-time"} and family in {"prb", "bler"} and not dataset_family:
+            raise ValueError("dataset_family is required for site-time and region-time KPI results")
         return self.repository.list_verified_kpi_results(
             family=family,
             grain=grain,

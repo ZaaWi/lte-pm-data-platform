@@ -247,6 +247,26 @@ def test_kpi_results_site_time(monkeypatch) -> None:  # noqa: ANN001
     assert response.rows[0]["site_code"] == "S1"
 
 
+def test_kpi_results_site_time_requires_dataset_family_for_prb_bler(monkeypatch) -> None:  # noqa: ANN001
+    def raise_error(self, **kwargs):  # noqa: ANN001, ANN202
+        raise ValueError("dataset_family is required for site-time and region-time KPI results")
+
+    monkeypatch.setattr(KpiService, "list_results", raise_error)
+
+    with pytest.raises(Exception) as exc_info:
+        kpi_results_site_time(
+            family="prb",
+            limit=5,
+            dataset_family=None,
+            site_code="S1",
+            collect_time_from=None,
+            collect_time_to=None,
+            connection=FakeConnection(),
+        )
+
+    assert exc_info.value.status_code == 400
+
+
 def test_kpi_results_region_time(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         KpiService,

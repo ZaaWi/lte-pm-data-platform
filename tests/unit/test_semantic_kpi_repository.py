@@ -259,8 +259,19 @@ def test_list_verified_kpi_results_entity_time_requires_latest_window_fast_path(
 
 
 def test_list_verified_kpi_results_site_time_applies_offset() -> None:
-    rows = [{"dataset_family": "PM/sdr/ltefdd", "site_code": "S1"}]
-    repository = SemanticKpiRepository(FakeConnection(rows))  # type: ignore[arg-type]
+    connection = MultiCursorConnection(
+        [
+            [("2026-03-05 00:30:00",)],
+            [
+                {"counter_id": "C373424609", "counter_alias": "dl_prb_available"},
+                {"counter_id": "C373424610", "counter_alias": "dl_prb_used"},
+                {"counter_id": "C373424608", "counter_alias": "ul_prb_used"},
+                {"counter_id": "C373424611", "counter_alias": "ul_prb_available"},
+            ],
+            [{"dataset_family": "PM/sdr/ltefdd", "site_code": "S1"}],
+        ]
+    )
+    repository = SemanticKpiRepository(connection)  # type: ignore[arg-type]
 
     result = repository.list_verified_kpi_results(
         family="prb",
@@ -270,11 +281,51 @@ def test_list_verified_kpi_results_site_time_applies_offset() -> None:
         dataset_family="PM/sdr/ltefdd",
     )
 
-    assert result == rows
-    query, params = repository.connection.cursor_obj.executed[0]
-    assert "FROM vw_verified_prb_kpi_site_time" in query
-    assert "LIMIT %s\nOFFSET %s" in query
-    assert params[-2:] == (25, 50)
+    assert result == [{"dataset_family": "PM/sdr/ltefdd", "site_code": "S1"}]
+    latest_query, latest_params = connection.used_cursors[0].executed[0]
+    counter_query, counter_params = connection.used_cursors[1].executed[0]
+    result_query, result_params = connection.used_cursors[2].executed[0]
+    assert "SELECT MAX(collect_time)" in latest_query
+    assert latest_params == ("PM/sdr/ltefdd",)
+    assert "FROM ref_semantic_counter_dictionary" in counter_query
+    assert counter_params[0] == "PM/sdr/ltefdd"
+    assert "FROM pm_ltefdd_sample AS s" in result_query
+    assert "JOIN ref_lte_entity_topology_enrichment AS t" in result_query
+    assert "GROUP BY dataset_family, site_code, site_name, collect_time" in result_query
+    assert result_params[2] == "PM/sdr/ltefdd"
+    assert result_params[-2:] == (25, 50)
+
+
+def test_list_verified_kpi_results_region_time_uses_fast_path() -> None:
+    connection = MultiCursorConnection(
+        [
+            [("2026-03-05 00:30:00",)],
+            [
+                {"counter_id": "C373454800", "counter_alias": "dl_tb_error_blocks"},
+                {"counter_id": "C373454801", "counter_alias": "dl_tb_total_blocks"},
+                {"counter_id": "C373454802", "counter_alias": "ul_tb_error_blocks"},
+                {"counter_id": "C373454803", "counter_alias": "ul_tb_total_blocks"},
+            ],
+            [{"dataset_family": "PM/sdr/ltefdd", "region_code": "RU"}],
+        ]
+    )
+    repository = SemanticKpiRepository(connection)  # type: ignore[arg-type]
+
+    result = repository.list_verified_kpi_results(
+        family="bler",
+        grain="region-time",
+        limit=10,
+        offset=0,
+        dataset_family="PM/sdr/ltefdd",
+        region_code="RU",
+    )
+
+    assert result == [{"dataset_family": "PM/sdr/ltefdd", "region_code": "RU"}]
+    result_query, result_params = connection.used_cursors[2].executed[0]
+    assert "FROM pm_ltefdd_sample AS s" in result_query
+    assert "AND region_code = %s" in result_query
+    assert "GROUP BY dataset_family, region_code, region_name, collect_time" in result_query
+    assert result_params[-3:] == ("RU", 10, 0)
 
 
 def test_list_verified_kpi_validation_entity_time_uses_fast_path_for_prb() -> None:

@@ -43,7 +43,7 @@ class SemanticKpiRepository:
         if grain == "entity-time":
             if dataset_family is None:
                 raise ValueError("dataset_family is required for entity-time KPI results")
-            collect_time_from, collect_time_to = self._normalize_entity_time_window(
+            collect_time_from, collect_time_to = self._normalize_collect_time_window(
                 dataset_family=dataset_family,
                 collect_time_from=collect_time_from,
                 collect_time_to=collect_time_to,
@@ -51,6 +51,25 @@ class SemanticKpiRepository:
             return self._list_verified_entity_time_results(
                 family=family,
                 dataset_family=dataset_family,
+                limit=limit,
+                offset=offset,
+                collect_time_from=collect_time_from,
+                collect_time_to=collect_time_to,
+            )
+        if grain in {"site-time", "region-time"} and family in {"prb", "bler"}:
+            if dataset_family is None:
+                raise ValueError("dataset_family is required for site-time and region-time KPI results")
+            collect_time_from, collect_time_to = self._normalize_collect_time_window(
+                dataset_family=dataset_family,
+                collect_time_from=collect_time_from,
+                collect_time_to=collect_time_to,
+            )
+            return self._list_verified_topology_rollup_results(
+                family=family,
+                grain=grain,
+                dataset_family=dataset_family,
+                site_code=site_code,
+                region_code=region_code,
                 limit=limit,
                 offset=offset,
                 collect_time_from=collect_time_from,
@@ -191,7 +210,7 @@ class SemanticKpiRepository:
             return None
         return row[0]
 
-    def _normalize_entity_time_window(
+    def _normalize_collect_time_window(
         self,
         *,
         dataset_family: str,
@@ -407,6 +426,294 @@ class SemanticKpiRepository:
             {family_specs[family]["select"]}
         """
         params.extend([limit, offset])
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query, tuple(params))
+            return list(cursor.fetchall())
+
+    def _list_verified_topology_rollup_results(
+        self,
+        *,
+        family: str,
+        grain: str,
+        dataset_family: str,
+        site_code: str | None,
+        region_code: str | None,
+        limit: int,
+        offset: int,
+        collect_time_from: datetime | None,
+        collect_time_to: datetime | None,
+    ) -> list[dict]:
+        family_specs: dict[str, dict[str, object]] = {
+            "prb": {
+                "aliases": {
+                    "dl_prb_used": ("sum_counter_value", "dl_prb_used"),
+                    "dl_prb_available": ("sum_counter_value", "dl_prb_available"),
+                    "ul_prb_used": ("sum_counter_value", "ul_prb_used"),
+                    "ul_prb_available": ("sum_counter_value", "ul_prb_available"),
+                },
+                "entity_select": """
+                    SELECT
+                        dataset_family,
+                        collect_time,
+                        logical_entity_key,
+                        site_code,
+                        site_name,
+                        region_code,
+                        region_name,
+                        CASE
+                            WHEN dl_prb_available IS NULL OR dl_prb_available = 0 THEN NULL
+                            ELSE 100.0 * dl_prb_used / dl_prb_available
+                        END AS dl_metric,
+                        CASE
+                            WHEN ul_prb_available IS NULL OR ul_prb_available = 0 THEN NULL
+                            ELSE 100.0 * ul_prb_used / ul_prb_available
+                        END AS ul_metric
+                    FROM entity_pivot
+                    WHERE dl_prb_available IS NOT NULL
+                       OR ul_prb_available IS NOT NULL
+                """,
+                "site_select": """
+                    SELECT
+                        dataset_family,
+                        site_code,
+                        site_name,
+                        collect_time,
+                        AVG(dl_metric) AS dl_prb_utilization,
+                        AVG(ul_metric) AS ul_prb_utilization
+                    FROM entity_metrics
+                    WHERE TRUE
+                    GROUP BY dataset_family, site_code, site_name, collect_time
+                    ORDER BY collect_time DESC, dataset_family, site_code
+                    LIMIT %s
+                    OFFSET %s
+                """,
+                "region_select": """
+                    SELECT
+                        dataset_family,
+                        region_code,
+                        region_name,
+                        collect_time,
+                        AVG(dl_metric) AS dl_prb_utilization,
+                        AVG(ul_metric) AS ul_prb_utilization
+                    FROM entity_metrics
+                    WHERE TRUE
+                    GROUP BY dataset_family, region_code, region_name, collect_time
+                    ORDER BY collect_time DESC, dataset_family, region_code
+                    LIMIT %s
+                    OFFSET %s
+                """,
+            },
+            "bler": {
+                "aliases": {
+                    "dl_tb_error_blocks": ("sum_counter_value", "dl_tb_error_blocks"),
+                    "dl_tb_total_blocks": ("sum_counter_value", "dl_tb_total_blocks"),
+                    "ul_tb_error_blocks": ("sum_counter_value", "ul_tb_error_blocks"),
+                    "ul_tb_total_blocks": ("sum_counter_value", "ul_tb_total_blocks"),
+                },
+                "entity_select": """
+                    SELECT
+                        dataset_family,
+                        collect_time,
+                        logical_entity_key,
+                        site_code,
+                        site_name,
+                        region_code,
+                        region_name,
+                        CASE
+                            WHEN dl_tb_total_blocks IS NULL OR dl_tb_total_blocks = 0 THEN NULL
+                            ELSE 100.0 * dl_tb_error_blocks / dl_tb_total_blocks
+                        END AS dl_metric,
+                        CASE
+                            WHEN ul_tb_total_blocks IS NULL OR ul_tb_total_blocks = 0 THEN NULL
+                            ELSE 100.0 * ul_tb_error_blocks / ul_tb_total_blocks
+                        END AS ul_metric
+                    FROM entity_pivot
+                    WHERE dl_tb_total_blocks IS NOT NULL
+                       OR ul_tb_total_blocks IS NOT NULL
+                """,
+                "site_select": """
+                    SELECT
+                        dataset_family,
+                        site_code,
+                        site_name,
+                        collect_time,
+                        AVG(dl_metric) AS dl_bler,
+                        AVG(ul_metric) AS ul_bler
+                    FROM entity_metrics
+                    WHERE TRUE
+                    GROUP BY dataset_family, site_code, site_name, collect_time
+                    ORDER BY collect_time DESC, dataset_family, site_code
+                    LIMIT %s
+                    OFFSET %s
+                """,
+                "region_select": """
+                    SELECT
+                        dataset_family,
+                        region_code,
+                        region_name,
+                        collect_time,
+                        AVG(dl_metric) AS dl_bler,
+                        AVG(ul_metric) AS ul_bler
+                    FROM entity_metrics
+                    WHERE TRUE
+                    GROUP BY dataset_family, region_code, region_name, collect_time
+                    ORDER BY collect_time DESC, dataset_family, region_code
+                    LIMIT %s
+                    OFFSET %s
+                """,
+            },
+        }
+        alias_specs = family_specs[family]["aliases"]  # type: ignore[index]
+        aliases = tuple(alias_specs.keys())  # type: ignore[union-attr]
+        counter_specs = self._get_verified_counter_specs(
+            dataset_family=dataset_family,
+            aliases=aliases,
+        )
+        if not counter_specs:
+            return []
+        counter_ids = [row["counter_id"] for row in counter_specs]
+        counter_aliases = [row["counter_alias"] for row in counter_specs]
+
+        entity_pivot_columns = []
+        for counter_alias, (value_column, result_alias) in alias_specs.items():  # type: ignore[union-attr]
+            entity_pivot_columns.append(
+                f"MAX({value_column}) FILTER (WHERE counter_alias = '{counter_alias}') AS {result_alias}"
+            )
+
+        topology_filter = "site_code IS NOT NULL" if grain == "site-time" else "region_code IS NOT NULL"
+        topology_code_filter = ""
+        filter_value: str | None = site_code if grain == "site-time" else region_code
+        params: list[object] = [counter_ids, counter_aliases, dataset_family, counter_ids]
+        if collect_time_from is not None:
+            topology_code_filter += "\n                  AND s.collect_time >= %s"
+            params.append(collect_time_from)
+        if collect_time_to is not None:
+            topology_code_filter += "\n                  AND s.collect_time <= %s"
+            params.append(collect_time_to)
+
+        logical_entity_key_expression = """
+            CASE
+                WHEN n.dataset_family = 'PM/sdr/ltefdd' THEN
+                    concat(
+                        'family=', COALESCE(n.dataset_family, 'UNKNOWN'),
+                        '|sbnid=', COALESCE(n.sbnid, ''),
+                        '|enodebid=', COALESCE(n.enodebid, ''),
+                        '|cellid=', COALESCE(n.cellid, '')
+                    )
+                WHEN n.dataset_family = 'PM/itbbu/ltefdd' THEN
+                    concat(
+                        'family=', COALESCE(n.dataset_family, 'UNKNOWN'),
+                        '|sbnid=', COALESCE(n.sbnid, ''),
+                        '|enbid=', COALESCE(n.enbid, ''),
+                        '|cellid=', COALESCE(n.cellid, '')
+                    )
+                WHEN n.dataset_family = 'PM/itbbu/itbbuplat' THEN
+                    concat(
+                        'family=', COALESCE(n.dataset_family, 'UNKNOWN'),
+                        '|sbnid=', COALESCE(n.sbnid, ''),
+                        '|meid=', COALESCE(n.meid, '')
+                    )
+                ELSE
+                    concat(
+                        'family=', COALESCE(n.dataset_family, 'UNKNOWN'),
+                        '|sbnid=', COALESCE(n.sbnid, ''),
+                        '|enbid=', COALESCE(n.enbid, ''),
+                        '|enodebid=', COALESCE(n.enodebid, ''),
+                        '|cellid=', COALESCE(n.cellid, ''),
+                        '|meid=', COALESCE(n.meid, ''),
+                        '|ani=', COALESCE(n.ani, '')
+                    )
+            END
+        """
+
+        query = f"""
+            WITH selected_counters AS (
+                SELECT *
+                FROM unnest(%s::text[], %s::text[]) AS c(counter_id, counter_alias)
+            ),
+            narrowed_raw AS (
+                SELECT
+                    s.dataset_family,
+                    s.collect_time,
+                    s.sbnid,
+                    s.enbid,
+                    s.enodebid,
+                    s.cellid,
+                    s.meid,
+                    s.ani,
+                    c.counter_alias,
+                    s.counter_value
+                FROM pm_ltefdd_sample AS s
+                JOIN selected_counters AS c
+                    ON c.counter_id = s.counter_id
+                WHERE s.dataset_family = %s
+                  AND s.counter_id = ANY(%s)
+                  {topology_code_filter}
+            ),
+            entity_inputs AS (
+                SELECT
+                    n.dataset_family,
+                    n.collect_time,
+                    {logical_entity_key_expression} AS logical_entity_key,
+                    n.counter_alias,
+                    SUM(n.counter_value) AS sum_counter_value
+                FROM narrowed_raw AS n
+                GROUP BY
+                    n.dataset_family,
+                    n.collect_time,
+                    logical_entity_key,
+                    n.counter_alias
+            ),
+            topology_inputs AS (
+                SELECT
+                    e.dataset_family,
+                    e.collect_time,
+                    e.logical_entity_key,
+                    t.site_code,
+                    t.site_name,
+                    t.region_code,
+                    t.region_name,
+                    e.counter_alias,
+                    e.sum_counter_value
+                FROM entity_inputs AS e
+                JOIN ref_lte_entity_topology_enrichment AS t
+                    ON t.logical_entity_key = e.logical_entity_key
+                WHERE t.{topology_filter}
+            ),
+            entity_pivot AS (
+                SELECT
+                    dataset_family,
+                    collect_time,
+                    logical_entity_key,
+                    site_code,
+                    site_name,
+                    region_code,
+                    region_name,
+                    {", ".join(entity_pivot_columns)}
+                FROM topology_inputs
+                GROUP BY
+                    dataset_family,
+                    collect_time,
+                    logical_entity_key,
+                    site_code,
+                    site_name,
+                    region_code,
+                    region_name
+            ),
+            entity_metrics AS (
+                {family_specs[family]["entity_select"]}
+            )
+        """
+        rollup_select = family_specs[family]["site_select"] if grain == "site-time" else family_specs[family]["region_select"]  # type: ignore[operator]
+        if filter_value is not None:
+            rollup_select = rollup_select.replace(
+                "WHERE TRUE",
+                "WHERE TRUE\n  AND site_code = %s" if grain == "site-time" else "WHERE TRUE\n  AND region_code = %s",
+            )
+            params.append(filter_value)
+        query += rollup_select
+        params.extend([limit, offset])
+
         with self.connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(query, tuple(params))
             return list(cursor.fetchall())

@@ -140,6 +140,9 @@ Not included in the first system version:
   - Topology
 - entity-time KPI Results stabilization with guardrails, date-bound normalization, and offset paging
 - entity-time KPI Validation stabilization for PRB and BLER using fast backend paths
+- local topology reference seeding from `LTE Project Parameter-20260301.xlsx`
+- materially mapped local topology enrichment after loading topology references and rerunning `sync-topology`
+- performant operator-facing PRB and BLER `site-time` / `region-time` API paths using direct fast paths over narrowed raw facts and topology enrichment
 
 ### Partially Implemented
 
@@ -151,15 +154,14 @@ Remaining work:
 - bundled RRC accessibility KPI review
 - throughput KPI verification remains blocked pending authoritative volume-lineage evidence
 
-#### Topology reference-data completion and local-dev topology enablement
+#### Topology authority and topology-quality hardening
 
 Remaining work:
 
-- provide curated topology CSV inputs for local development
-- load curated region, site, reporting, and entity-to-site mapping references
-- rerun topology sync with real mappings instead of empty reference tables
-- verify meaningful site/time and region/time KPI outputs after topology loading
-- close the documentation/workflow gap where README references topology CSVs that are not bundled in the repo
+- validate workbook-derived topology seeds against CM or another authoritative source
+- harden reporting hierarchy quality and parentage rules
+- resolve remaining unmapped and conflicting entities conservatively
+- define which topology fields remain curated versus derived
 
 #### CM-driven topology mapping analysis
 
@@ -168,7 +170,7 @@ Remaining work:
 - analyze available CM or inventory sources for authoritative site / region / reporting mapping
 - decide which topology fields should remain curated vs derived
 - define the authoritative local-dev and production mapping workflow
-- avoid treating current site/region rollups as the primary reporting path until topology reference quality is proven
+- keep improving confidence in site/region rollups through authority checks, not ad hoc expansion
 
 #### Performance baseline and optimization planning
 
@@ -185,7 +187,7 @@ Remaining work:
 - automated scheduling after manual UI/API operational flows are stable
 - monitoring / alerting hooks
 - broader verified KPI family rollout beyond the current PRB, BLER, and direct-mapped RRC stack
-- site/time and region/time KPI-path optimization after topology reference loading is stable
+- broader site/time and region/time optimization outside the current PRB/BLER operator fast paths
 
 ## 5. Ingestion Lifecycle
 
@@ -211,22 +213,19 @@ Convenience path:
 
 ## 7. Immediate Next Milestone
 
-### Topology reference-data completion and CM-driven topology mapping analysis
+### CM-driven topology mapping analysis and topology-quality hardening
 
 Target additions:
 
-- provide or generate the curated topology CSV inputs required by the existing load commands
-- load topology reference rows for region, site, reporting hierarchy, and entity-to-site mapping
-- rerun `sync-topology` and verify non-empty mapped site/region enrichment locally
-- validate meaningful site/time and region/time KPI outputs after topology population
-- analyze CM or other authoritative sources for stable site/region/reporting mapping
-- retain the current API/UI baseline; do not broaden to new KPI families before topology reference quality is established
+- validate the current workbook-derived topology seed set against CM or another authoritative source
+- harden the region/site/reporting mapping model where workbook conflicts exist
+- close the remaining gap between local development topology and an authoritative production-quality topology source
+- retain the current API/UI/operator baseline; do not broaden to new KPI families before topology quality is established
 
 Success condition:
 
-- local development has working curated topology reference data loaded through the documented workflow
-- `ref_lte_entity_topology_enrichment` contains mapped rows, not only `UNMAPPED`
-- site/time and region/time KPI outputs are meaningful in local verification, not just structurally implemented
+- local development keeps working mapped topology through the documented workflow
+- site/time and region/time operator paths remain meaningfully populated in local verification
 - the CM/reference-data strategy for authoritative topology mapping is clear enough to support the next stabilization step
 
 ### Near-term milestone after topology reference-data completion

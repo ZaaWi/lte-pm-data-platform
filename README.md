@@ -12,8 +12,10 @@ It ingests PM archives into PostgreSQL, materializes stable logical entities, ap
 - tracks file audit, lifecycle, retries, and reconciliation
 - materializes deterministic `logical_entity_key` values with `sync-entities`
 - supports explicit topology enrichment with `sync-topology`
+- seeds local topology references from the LTE Project Parameters workbook
 - loads semantic counter dictionaries and KPI definitions from curated CSVs
 - executes verified KPI slices at `entity_time`
+- exposes operator-facing `site_time` and `region_time` rollups for verified PRB and BLER with direct fast paths
 - exposes API and UI flows for inspection and manual operator control
 
 Verified KPI families currently implemented:
@@ -52,6 +54,7 @@ Verified working now:
 - topology unmapped/site/region coverage endpoints
 - KPI Results `entity-time` in the browser
 - KPI Validation `entity-time` for PRB and BLER
+- KPI Results `site-time` and `region-time` for PRB and BLER in the browser
 - KPI Results date filters normalized to day bounds
 - KPI Results offset-based paging with `Rows`, `Previous`, `Next`
 
@@ -62,14 +65,19 @@ Entity-time stabilization already in place:
 - `dataset_family` is required for KPI Results `entity-time`
 - if `entity-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
 
+Site/region operator stabilization now in place for PRB and BLER:
+
+- topology seeds generated from `LTE Project Parameter-20260301.xlsx` load successfully into the reference tables
+- `ref_lte_entity_topology_enrichment` is materially mapped locally after `sync-topology`
+- operator-facing PRB and BLER `site-time` / `region-time` API routes use direct fast paths instead of the heavy nested SQL views
+- `dataset_family` is required for PRB and BLER `site-time` / `region-time`
+- if `site-time` / `region-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
+
 ## Current Limitations
 
-- topology enrichment exists structurally, but meaningful `site_time` and `region_time` outputs depend on curated topology reference data being loaded first
-- local dev currently has a reference-data gap:
-  - the README workflow references topology CSV inputs
-  - those curated CSVs are not bundled in this repo
-- until topology references are loaded, `sync-topology` produces enrichment rows as `UNMAPPED`
-- because of that, `site_time` and `region_time` KPI routes are implemented but are not meaningful by default in local development
+- site/region outputs are now meaningful locally only after the topology reference CSVs are loaded and `sync-topology` has been rerun
+- the current local topology seed set is derived from the Project Parameters workbook and is useful for local development, but it is not yet the authoritative production mapping source
+- CM-driven topology derivation and reporting-hierarchy authority are still open work
 - RRC validation fast-path is not yet the primary verified local path; PRB and BLER entity-time validation are the stabilized operator path today
 - throughput KPIs remain blocked pending authoritative vendor evidence for provisional volume lineage
 - bundled RRC accessibility KPIs are not rolled out
@@ -150,7 +158,19 @@ python -m lte_pm_platform.cli load-sample \
 python -m lte_pm_platform.cli sync-entities
 ```
 
-### 3. Load verified KPI references
+### 3. Load topology references and sync topology
+
+Local topology seeds generated from `LTE Project Parameter-20260301.xlsx` now live under `data/reference/`:
+
+```bash
+python -m lte_pm_platform.cli load-topology-regions --csv data/reference/regions.csv
+python -m lte_pm_platform.cli load-topology-sites --csv data/reference/sites.csv
+python -m lte_pm_platform.cli load-topology-reporting --csv data/reference/reporting.csv
+python -m lte_pm_platform.cli load-topology-entity-map --csv data/reference/entity_site_map.csv
+python -m lte_pm_platform.cli sync-topology
+```
+
+### 4. Load verified KPI references
 
 ```bash
 python -m lte_pm_platform.cli load-counter-dictionary --csv data/reference/counter_dictionary.csv
@@ -163,7 +183,7 @@ Note:
 - KPI definition loading is per file; PRB, BLER, and RRC slices are currently maintained as separate seeds
 - see `docs/reference.md` for the current reference-load workflow
 
-### 4. Start the API and UI
+### 5. Start the API and UI
 
 API:
 
@@ -188,17 +208,23 @@ npm run dev
   - `grain = entity-time`
   - `dataset_family = PM/sdr/ltefdd` or `PM/itbbu/ltefdd`
 
+Also verify the optimized site/region operator path for PRB and BLER:
+
+- `grain = site-time` or `region-time`
+- `family = prb` or `bler`
+- `dataset_family = PM/sdr/ltefdd` or `PM/itbbu/ltefdd`
+- omit dates to use the latest `collect_time`, or set the day explicitly
+
 ## Next Milestone
 
-**Topology reference-data completion and CM-driven topology mapping analysis**
+**CM-driven topology mapping analysis and topology-quality hardening**
 
 Immediate work:
 
-- provide curated topology CSV inputs for local development
-- load region, site, reporting, and entity-to-site mapping references
-- rerun `sync-topology` with real mappings
-- verify meaningful `site_time` and `region_time` KPI outputs
-- analyze CM or other authoritative sources for stable site / region / reporting mapping
+- validate the workbook-derived local topology seed set against authoritative CM or inventory sources
+- decide which topology fields remain curated and which should be derived from CM
+- harden the reporting hierarchy and site/region authority model
+- extend the same site/region fast-path approach to remaining operator reads where justified
 
 Not the immediate priority:
 

@@ -20,14 +20,19 @@ Current verified KPI families:
 
 ## Topology Reference Loading
 
-Expected local topology CSV inputs:
+Local topology CSV inputs now present in `data/reference/`:
 
 - `data/reference/regions.csv`
 - `data/reference/sites.csv`
 - `data/reference/reporting.csv`
 - `data/reference/entity_site_map.csv`
 
-Those filenames are the expected loader inputs, but the curated CSVs are not currently bundled in this repo.
+These were generated conservatively from:
+
+- `LTE Project Parameter-20260301.xlsx`
+- sheet: `4G LTE`
+
+The current local seed set is good enough for local development and operator validation. It should not yet be treated as the final authoritative production mapping source.
 
 Topology load workflow:
 
@@ -49,6 +54,13 @@ python -m lte_pm_platform.cli summarize-region-coverage --limit 20
 
 If topology reference rows are missing, `sync-topology` will populate `ref_lte_entity_topology_enrichment` with `UNMAPPED` rows and site/region KPI outputs will not be meaningful.
 
+Current local verification status:
+
+- topology reference tables load successfully
+- `sync-topology` materially maps `ref_lte_entity_topology_enrichment`
+- remaining unmapped rows are a small minority
+- topology-aware site/region operator paths are now meaningful locally
+
 ## API Baseline
 
 Implemented API domains:
@@ -64,8 +76,11 @@ Important current guardrails:
 
 - KPI Results `entity-time` requires `dataset_family`
 - if `entity-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
+- PRB and BLER `site-time` / `region-time` also require `dataset_family`
+- if PRB or BLER `site-time` / `region-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
 - KPI Results UI uses date inputs and normalizes them to day bounds
 - KPI Results UI uses offset-based paging with `Rows`, `Previous`, and `Next`
+- operator-facing PRB and BLER `site-time` / `region-time` API routes use direct fast paths over narrowed raw facts plus topology enrichment instead of the heavier nested verified SQL views
 
 ## Operator UI Baseline
 
