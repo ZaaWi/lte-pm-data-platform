@@ -1,87 +1,91 @@
 # lte_pm_platform
 
-`lte_pm_platform` is a focused telecom data engineering project for ZTE LTE PM files.
+`lte_pm_platform` is a focused LTE PM engineering slice for ZTE archive files.
 
-The current goal is not a generic “big data platform”. It is a clean, inspectable ingestion and analytics slice for one vendor and one technology:
-
-`archive -> inner CSV -> normalized raw facts -> governed audit -> entity-aware coverage analysis`
-
-This repo is built to show practical data-engineering concerns clearly:
-
-- transactional ingestion
-- content-based idempotency
-- file lifecycle control
-- raw telecom dimensional modeling
-- post-ingestion normalization
-- SQL-first observability and coverage validation
-- additive topology enrichment for site/region-aware reporting
+It ingests PM archives into PostgreSQL, materializes stable logical entities, applies additive topology enrichment, executes a small verified KPI stack, and exposes the platform through CLI, API, and a minimal operator UI.
 
 ## What It Does
 
-Current implemented scope:
+- ingests ZTE LTE PM `.tar.gz` and `.zip` archives
+- streams inner CSVs without full extraction
+- stores normalized raw counter facts in PostgreSQL
+- tracks file audit, lifecycle, retries, and reconciliation
+- materializes deterministic `logical_entity_key` values with `sync-entities`
+- supports explicit topology enrichment with `sync-topology`
+- loads semantic counter dictionaries and KPI definitions from curated CSVs
+- executes verified KPI slices at `entity_time`
+- exposes API and UI flows for inspection and manual operator control
 
-- ingest ZTE LTE PM `.tar.gz` and `.zip` archives
-- stream inner CSV files without full extraction
-- explode wide PM counter tables into normalized raw fact rows
-- persist governed file audit records with hash-based duplicate protection
-- support local mirrored discovery and FTP acquisition foundations
-- support registry-backed staged FTP discovery, download, ingest, retry, and reconciliation
-- support a local-first scheduler entrypoint for automated FTP pipeline cycles
-- persist stronger FTP registry metadata for remote file visibility and operator control
-- track post-commit file lifecycle state
-- derive stable `logical_entity_key` values from real raw dimensions
-- materialize entity identity with a separate `sync-entities` step
-- support additive topology enrichment for site, region, and reporting-aware observability
-- expose explicit topology reference loaders and a rerunnable `sync-topology` step
-- support a curated semantic KPI framework layer driven by counter aliases rather than raw counter IDs
-- support a verified vendor-indicator semantic layer that captures indicator-to-raw-counter lineage
-- load semantic counter dictionaries and KPI definitions through explicit rerunnable CSV-driven commands
-- expose SQL views for semantic counter projection, KPI input coverage, unmapped counters, and provisional KPI definitions
-- execute 7 verified KPIs across PRB, BLER, and direct-mapped RRC at entity/time grain
-- expose topology-aware verified KPI rollup views at site/time and region/time grain
-- expose validation and CLI inspection commands for the verified KPI stack across entity/site/region grains
-- expose a FastAPI API layer for health, ingestion, topology, KPI results, KPI validation, and manual operator actions
-- expose a minimal in-repo operator UI for Overview, Ingestion, KPI Results, Validation, and Topology
-- expose SQL views for ingest observability, lifecycle exceptions, coverage timelines, and daily coverage summaries
+Verified KPI families currently implemented:
 
-Current out of scope:
+- PRB
+  - `dl_prb_utilization`
+  - `ul_prb_utilization`
+- BLER
+  - `dl_bler`
+  - `ul_bler`
+- direct-mapped RRC
+  - `rrc_connected_users_max`
+  - `rrc_connected_users_mean`
+  - `rrc_connected_users_online`
 
-- multi-vendor support
-- external orchestration frameworks
-- throughput KPI rollout
-- bundled RRC accessibility KPI rollout
-- large-scale performance tuning beyond a working local engineering slice
+Total verified KPIs currently implemented: `7`
+
+## Current State
+
+Implemented:
+
+- ingestion pipeline
+- raw LTE PM storage in Postgres
+- entity identity layer
+- topology enrichment and sync flow
+- semantic counter dictionary
+- KPI definition layer
+- verified KPI execution
+- FastAPI API baseline
+- minimal in-repo operator UI
+
+Verified working now:
+
+- API `health` / `ready`
+- ingestion status, failures, and reconciliation preview
+- topology unmapped/site/region coverage endpoints
+- KPI Results `entity-time` in the browser
+- KPI Validation `entity-time` for PRB and BLER
+- KPI Results date filters normalized to day bounds
+- KPI Results offset-based paging with `Rows`, `Previous`, `Next`
+
+Entity-time stabilization already in place:
+
+- KPI Results `entity-time` uses early filtering and explicit counter narrowing
+- KPI Validation `entity-time` for PRB and BLER avoids heavy execution-validation view scans
+- `dataset_family` is required for KPI Results `entity-time`
+- if `entity-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
+
+## Current Limitations
+
+- topology enrichment exists structurally, but meaningful `site_time` and `region_time` outputs depend on curated topology reference data being loaded first
+- local dev currently has a reference-data gap:
+  - the README workflow references topology CSV inputs
+  - those curated CSVs are not bundled in this repo
+- until topology references are loaded, `sync-topology` produces enrichment rows as `UNMAPPED`
+- because of that, `site_time` and `region_time` KPI routes are implemented but are not meaningful by default in local development
+- RRC validation fast-path is not yet the primary verified local path; PRB and BLER entity-time validation are the stabilized operator path today
+- throughput KPIs remain blocked pending authoritative vendor evidence for provisional volume lineage
+- bundled RRC accessibility KPIs are not rolled out
 
 ## Stack
 
 - Python 3.12
 - PostgreSQL 16
-- SQL views and SQL-first analytics
-- Docker Compose
+- SQL-first analytics and KPI execution
 - Typer CLI
 - FastAPI
 - Vite + TypeScript
+- Docker Compose
 - psycopg
 - pytest
 - Ruff
-
-## Roadmap Status
-
-- Milestone 5: staged FTP pipeline and retry/reconciliation workflow -> completed
-- Scheduler-driven execution for the staged FTP pipeline -> completed
-- FTP remote metadata and operational controls -> completed
-- Entity identity and topology enrichment flow -> completed
-- Semantic KPI framework foundation -> completed
-- Verified vendor indicator semantic layer -> completed
-- First verified PRB KPI slice execution -> completed
-- Verified BLER KPI slice execution -> completed
-- Verified RRC KPI slice execution -> completed
-- Verified KPI topology-aware site/time and region/time rollup views -> implemented
-- Verified KPI CLI inspection and validation layer -> completed
-- API and minimal operator UI baseline -> completed
-- Entity-time KPI Results stabilization -> completed
-- Entity-time KPI Validation stabilization for PRB/BLER -> completed
-- Active sub-milestone: topology reference-data loading and CM-driven topology mapping analysis
 
 ## Architecture
 
@@ -94,272 +98,39 @@ flowchart LR
     E --> F[Transactional archive ingest]
     F --> G[(pm_ltefdd_sample)]
     F --> H[(file_audit)]
-    F --> I[Post-commit file lifecycle]
-    G --> J[Entity-aware SQL views]
-    G --> K[sync-entities]
-    K --> L[(ref_lte_entity_identity)]
-    L --> O[sync-topology]
-    O --> P[(ref_lte_entity_topology_enrichment)]
-    P --> Q[Semantic counter projection]
-    Q --> R[KPI input coverage and execution foundation]
-    H --> M[Observability and reconciliation]
+    G --> I[sync-entities]
+    I --> J[(ref_lte_entity_identity)]
+    J --> K[sync-topology]
+    K --> L[(ref_lte_entity_topology_enrichment)]
+    G --> M[semantic counter projection]
+    M --> N[verified KPI execution]
+    N --> O[CLI / API / UI]
 ```
 
-### Project Layout
+Project layout:
 
 ```text
 lte_pm_platform/
 ├── src/lte_pm_platform/
+│   ├── api/
 │   ├── cli.py
-│   ├── config.py
-│   ├── domain/
 │   ├── db/
 │   ├── pipeline/
-│   └── utils/
+│   └── services/
 ├── sql/
 │   ├── init/
 │   └── queries/
 ├── data/
+├── ui/
 ├── tests/
+├── docs/
 ├── docker-compose.yml
-├── Makefile
 └── README.md
 ```
 
-## Data Model
+## Quick Start
 
-### Raw Fact Table
-
-`pm_ltefdd_sample` is the current raw exploded fact table.
-
-Each row represents one counter observation with:
-
-- lineage: `source_file`, `csv_name`
-- file metadata: `dataset_family`, `interval_start`, `revision`
-- measurement time: `collect_time`
-- raw entity dimensions: `sbnid`, `enbid`, `enodebid`, `cellid`, `meid`, `ani`
-- counter payload: `counter_id`, `counter_value`
-
-This is intentionally not over-normalized yet. It is a pragmatic raw fact shape for telecom PM analysis.
-
-### Entity Normalization
-
-Entity normalization is derived from real raw fields, not guessed telecom semantics.
-
-Current empirical identity rules:
-
-- `PM/sdr/ltefdd` -> `sbnid + enodebid + cellid`
-- `PM/itbbu/ltefdd` -> `sbnid + enbid + cellid`
-- `PM/itbbu/itbbuplat` -> `sbnid + meid`
-
-The resulting key is `logical_entity_key`.
-
-Important: this is a platform normalization key for current project use, not a vendor-global canonical identity.
-
-### Topology Enrichment
-
-Topology enrichment is additive and explicit.
-
-- `logical_entity_key` remains the identity base
-- curated mappings project entities into:
-  - site
-  - region
-  - optional reporting hierarchy
-- enrichment is materialized by an explicit rerunnable `sync-topology` step
-- raw ingest and raw identity generation remain unchanged
-- meaningful site/region outputs require curated topology reference rows to be loaded first
-- in the current repo, the topology load commands exist, but the example curated CSV inputs referenced below are not bundled in `data/reference/`
-
-### Semantic KPI Framework
-
-Semantic KPI work is also additive and explicit.
-
-- raw facts remain keyed by raw `counter_id`
-- curated dictionary rows map `dataset_family + counter_id` to stable `counter_alias`
-- curated vendor indicator rows map verified vendor indicator codes to semantic aliases and explicit raw-counter lineage
-- KPI definitions reference semantic aliases, not raw counter IDs
-- KPI validation and execution foundations operate through SQL views on top of entity/topology-aware raw facts
-- the verified entity/time execution slices currently include:
-  - `dl_prb_utilization`
-  - `ul_prb_utilization`
-  - `dl_bler`
-  - `ul_bler`
-  - `rrc_connected_users_max`
-  - `rrc_connected_users_mean`
-  - `rrc_connected_users_online`
-- topology rollups remain separate and are not part of the base executed KPI output layer
-- separate verified KPI rollup views now exist for:
-  - `site_time`
-  - `region_time`
-- those rollup views are only meaningful after topology reference mappings are loaded and synced
-
-### Verified KPI Views
-
-Current verified KPI output views include:
-
-- entity/time:
-  - `vw_verified_prb_kpi_entity_time`
-  - `vw_verified_bler_kpi_entity_time`
-  - `vw_verified_rrc_kpi_entity_time`
-- site/time:
-  - `vw_verified_prb_kpi_site_time`
-  - `vw_verified_bler_kpi_site_time`
-  - `vw_verified_rrc_kpi_site_time`
-- region/time:
-  - `vw_verified_prb_kpi_region_time`
-  - `vw_verified_bler_kpi_region_time`
-  - `vw_verified_rrc_kpi_region_time`
-
-Current verified KPI validation views include:
-
-- entity/time:
-  - `vw_verified_prb_kpi_execution_validation`
-  - `vw_verified_bler_kpi_execution_validation`
-  - `vw_verified_rrc_kpi_output_validation`
-- site/time:
-  - `vw_verified_prb_kpi_site_time_validation`
-  - `vw_verified_bler_kpi_site_time_validation`
-  - `vw_verified_rrc_kpi_site_time_validation`
-- region/time:
-  - `vw_verified_prb_kpi_region_time_validation`
-  - `vw_verified_bler_kpi_region_time_validation`
-  - `vw_verified_rrc_kpi_region_time_validation`
-
-### API and Operator UI
-
-Implemented API baseline:
-
-- `GET /api/v1/health`
-- `GET /api/v1/ready`
-- ingestion reads:
-  - status
-  - failures
-  - reconciliation preview
-- topology reads:
-  - unmapped entities
-  - site coverage
-  - region coverage
-- KPI result reads:
-  - entity/time
-  - site/time
-  - region/time
-- KPI validation reads:
-  - entity/time
-  - site/time
-  - region/time
-- manual operator actions:
-  - FTP run cycle
-  - retry download
-  - retry ingest
-  - sync entities
-  - sync topology
-
-Implemented operator UI baseline:
-
-- Overview
-- Ingestion
-- KPI Results
-- Validation
-- Topology
-
-Current verified working operator paths:
-
-- API `health` / `ready`
-- ingestion status, failures, and reconciliation preview
-- topology unmapped/site/region coverage endpoints
-- KPI Results `entity-time` in the browser
-- KPI Validation `entity-time` for PRB and BLER
-
-Current operator-facing guardrails:
-
-- KPI Results `entity-time` requires `dataset_family`
-- if `entity-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
-- KPI Results date filters use date inputs and normalize to day bounds before calling the API
-- KPI Results supports minimal offset-based paging through `Rows`, `Previous`, and `Next`
-- `entity-time` KPI Results and PRB/BLER validation use optimized backend paths with early filtering and explicit counter narrowing
-
-## Working Domain Hypothesis
-
-Empirical, not vendor-confirmed:
-
-- `PM/itbbu/itbbuplat` appears non-cell-level and likely node/BBU/platform-oriented because it lacks `CELLID` in validated samples and has much lower row/entity counts.
-- `PM/itbbu/ltefdd` and `PM/sdr/ltefdd` appear cell-level because they contain `CELLID` and their distinct cell counts are close to the expected LTE project inventory.
-
-This hypothesis is used for modeling and reporting only. It is not treated as vendor-documented truth.
-
-## Transaction, Lifecycle, and Normalization Model
-
-### Atomic Ingestion Unit
-
-One archive ingest is atomic from the database perspective for:
-
-- raw inserts into `pm_ltefdd_sample`
-- the initial `file_audit` row
-
-This means handled failures should no longer leave committed raw rows without a matching audit row.
-
-### Transaction Model
-
-`SUCCESS`
-- raw rows and the initial audit row commit together
-- if a success-hash race occurs, the loser rolls back and is recorded as `SKIPPED_DUPLICATE`
-
-`FAILED`
-- raw inserts roll back
-- failed audit is written afterward with the error and lifecycle result
-
-`SKIPPED_DUPLICATE`
-- no new raw rows are inserted
-- a duplicate audit row is written
-
-### Idempotency Model
-
-Duplicate protection is content-based, not name-based.
-
-- `file_hash` is SHA-256 over archive bytes
-- it does not depend on filename or path
-- the same content at two different paths produces the same hash
-
-Protection is enforced in two layers:
-
-1. a pre-check for an existing successful `file_hash`
-2. a DB unique-success-hash rule in `file_audit`
-
-### File Lifecycle Model
-
-File handling is post-commit. It is not part of the raw+audit DB transaction.
-
-Current rules:
-
-- `SUCCESS` -> move to `data/archive/`
-- `SKIPPED_DUPLICATE` -> move to `data/archive/`
-- `FAILED` -> move to `data/rejected/`
-
-Lifecycle state is tracked in `file_audit.lifecycle_status`:
-
-- `PENDING`
-- `COMPLETED`
-- `FAILED`
-
-### Normalization Model
-
-Entity sync is explicitly post-ingestion and eventual.
-
-- `sync-entities` is not part of archive ingest
-- the archive transaction ends at raw facts + initial audit
-- `sync-entities` materializes `ref_lte_entity_identity`
-- successful ingests are then marked through `normalization_status`
-
-Normalization state is tracked in `file_audit.normalization_status`:
-
-- `PENDING`
-- `COMPLETED`
-- `FAILED`
-- `NOT_REQUIRED`
-
-## Database Initialization
-
-Initialize Postgres:
+### 1. Initialize local services
 
 ```bash
 cp .env.example .env
@@ -370,334 +141,85 @@ pip install -e .[dev]
 python -m lte_pm_platform.cli init-db
 ```
 
-`init-db` applies SQL files in an explicit dependency order and is intended to be re-runnable on a populated database.
-
-## Example CLI Workflow
-
-### 1. Initialize the database
+### 2. Load a local PM sample and materialize entities
 
 ```bash
-python -m lte_pm_platform.cli init-db
-```
-
-### 2. Load a controlled local validation slice
-
-```bash
-python -m lte_pm_platform.cli local-list \
-  --family PM/itbbu/ltefdd \
-  --start 2026-03-05 \
-  --end 2026-03-05 \
-  --revision-policy additive
-
 python -m lte_pm_platform.cli load-sample \
-  --zip data/input/local_selection/UMEID_ITBBU_LTEFDD_PM_COMMON_ZTE_20260305_0015.tar.gz
-```
+  --zip data/input/local_selection/UMEID_ITBBU_LTEFDD_PM_COMMON_ZTE_20260305_0000.tar.gz
 
-### 3. Reconcile audit and files
-
-```bash
-python -m lte_pm_platform.cli reconcile-ingest-files --limit 100
-```
-
-### 4. Run entity normalization
-
-```bash
 python -m lte_pm_platform.cli sync-entities
 ```
 
-### 5. Load curated topology mappings and sync enrichment
-
-```bash
-python -m lte_pm_platform.cli load-topology-regions --csv data/reference/regions.csv
-python -m lte_pm_platform.cli load-topology-sites --csv data/reference/sites.csv
-python -m lte_pm_platform.cli load-topology-reporting --csv data/reference/reporting.csv
-python -m lte_pm_platform.cli load-topology-entity-map --csv data/reference/entity_site_map.csv
-python -m lte_pm_platform.cli sync-topology
-python -m lte_pm_platform.cli list-unmapped-entities --limit 20
-python -m lte_pm_platform.cli summarize-site-coverage --limit 20
-python -m lte_pm_platform.cli summarize-region-coverage --limit 20
-```
-
-Important local-dev note:
-
-- the commands above are implemented and rerunnable
-- the example CSV filenames are the expected inputs for local topology loading
-- those curated topology CSVs are not currently bundled in this repo
-- until they are provided and loaded, `sync-topology` will populate enrichment rows as `UNMAPPED`, and site/region KPI routes will remain empty or non-meaningful
-
-### 6. Validate coverage over time
-
-```bash
-python -m lte_pm_platform.cli summarize-coverage-timeline --limit 20
-python -m lte_pm_platform.cli compare-expected-cells-timeline --expected 10251 --limit 20
-```
-
-### 7. Load semantic KPI references and inspect coverage
+### 3. Load verified KPI references
 
 ```bash
 python -m lte_pm_platform.cli load-counter-dictionary --csv data/reference/counter_dictionary.csv
-python -m lte_pm_platform.cli load-kpi-definitions --csv data/reference/kpi_definitions.csv
-python -m lte_pm_platform.cli list-unmapped-counters --limit 20
-python -m lte_pm_platform.cli list-provisional-kpis --limit 20
-python -m lte_pm_platform.cli summarize-kpi-input-coverage --limit 20
+python -m lte_pm_platform.cli load-kpi-definitions --csv data/reference/kpi_definitions_rrc_slice.csv
 ```
 
-### 8. Inspect the verified KPI stack
+Note:
 
-Entity/time:
+- the canonical counter dictionary file exists in the repo
+- KPI definition loading is per file; PRB, BLER, and RRC slices are currently maintained as separate seeds
+- see `docs/reference.md` for the current reference-load workflow
+
+### 4. Start the API and UI
+
+API:
 
 ```bash
-python -m lte_pm_platform.cli list-verified-prb-kpi-entity-time --limit 20
-python -m lte_pm_platform.cli list-verified-bler-kpi-entity-time --limit 20
-python -m lte_pm_platform.cli list-verified-rrc-kpi-entity-time --limit 20
-python -m lte_pm_platform.cli validate-verified-rrc-kpi-entity-time
+./.venv/bin/python -m uvicorn lte_pm_platform.api.app:app --host 0.0.0.0 --port 8000
 ```
 
-Site/time:
+UI:
 
 ```bash
-python -m lte_pm_platform.cli list-verified-prb-kpi-site-time --limit 20
-python -m lte_pm_platform.cli list-verified-bler-kpi-site-time --limit 20
-python -m lte_pm_platform.cli list-verified-rrc-kpi-site-time --limit 20
-python -m lte_pm_platform.cli validate-verified-prb-kpi-site-time
-python -m lte_pm_platform.cli validate-verified-bler-kpi-site-time
-python -m lte_pm_platform.cli validate-verified-rrc-kpi-site-time
+cd ui
+npm install
+npm run dev
 ```
 
-Region/time:
+### 5. Verify the stabilized entity-time path
 
-```bash
-python -m lte_pm_platform.cli list-verified-prb-kpi-region-time --limit 20
-python -m lte_pm_platform.cli list-verified-bler-kpi-region-time --limit 20
-python -m lte_pm_platform.cli list-verified-rrc-kpi-region-time --limit 20
-python -m lte_pm_platform.cli validate-verified-prb-kpi-region-time
-python -m lte_pm_platform.cli validate-verified-bler-kpi-region-time
-python -m lte_pm_platform.cli validate-verified-rrc-kpi-region-time
-```
+- API: `http://localhost:8000/api/v1/health`
+- UI: `http://localhost:5173`
+- use `KPI Results` with:
+  - `family = prb|bler|rrc`
+  - `grain = entity-time`
+  - `dataset_family = PM/sdr/ltefdd` or `PM/itbbu/ltefdd`
 
-Meaningful site/time and region/time KPI outputs depend on curated topology reference data being loaded and synced first.
+## Next Milestone
 
-### 9. Backfill old lifecycle rows if needed
+**Topology reference-data completion and CM-driven topology mapping analysis**
 
-```bash
-python -m lte_pm_platform.cli backfill-lifecycle-status --limit 100
-```
+Immediate work:
 
-### 10. Operate the staged FTP pipeline
+- provide curated topology CSV inputs for local development
+- load region, site, reporting, and entity-to-site mapping references
+- rerun `sync-topology` with real mappings
+- verify meaningful `site_time` and `region_time` KPI outputs
+- analyze CM or other authoritative sources for stable site / region / reporting mapping
 
-Inspect staged FTP state:
+Not the immediate priority:
 
-```bash
-python -m lte_pm_platform.cli ftp-status
-python -m lte_pm_platform.cli ftp-failures --limit 20
-python -m lte_pm_platform.cli ftp-failure-show --id 101
-python -m lte_pm_platform.cli ftp-reconcile --limit 20
-```
-
-Run one manual FTP cycle:
-
-```bash
-python -m lte_pm_platform.cli ftp-run-cycle --limit 20
-python -m lte_pm_platform.cli ftp-run-cycle --limit 20 --retry-failed
-python -m lte_pm_platform.cli ftp-run-cycle --limit 20 --dry-run
-```
-
-Retry selected failed rows explicitly:
-
-```bash
-python -m lte_pm_platform.cli ftp-retry-download --id 101 --id 102
-python -m lte_pm_platform.cli ftp-retry-ingest --id 205 --id 206
-```
-
-## Time-Aware Archive Selection
-
-Supported archive names include:
-
-- `UMEID_ITBBU_ITBBUPLAT_PM_COMMON_ZTE_YYYYMMDD_HHMM.tar.gz`
-- `UMEID_ITBBU_ITBBUPLAT_PM_COMMON_ZTE_YYYYMMDD_HHMM_R1.tar.gz`
-- `UMEID_ITBBU_LTEFDD_PM_COMMON_ZTE_YYYYMMDD_HHMM.tar.gz`
-- `UMEID_ITBBU_LTEFDD_PM_COMMON_ZTE_YYYYMMDD_HHMM_R1.tar.gz`
-- `UMEID_LTEFDD_PM_COMMON_ZTE_YYYYMMDD_HHMM.tar.gz`
-- `UMEID_LTEFDD_PM_COMMON_ZTE_YYYYMMDD_HHMM_R1.tar.gz`
-
-Accepted time inputs:
-
-- `YYYYMMDDHHMM`
-- `YYYY-MM-DD HH:MM`
-- `YYYY-MM-DD`
-
-Selection window semantics:
-
-- start is inclusive
-- end is exclusive internally
-- date-only `--start 2026-03-05` means `2026-03-05 00:00:00`
-- date-only `--end 2026-03-05` means `2026-03-06 00:00:00`
-
-Revision policies:
-
-- `additive`
-- `base-only`
-- `revisions-only`
-- `latest-only`
-
-Default is `additive`, based on observed `_R1` supplement behavior in validated samples.
-
-## SQL Views
-
-### Raw and Entity-Aware Analytics
-
-- `vw_pm_raw_with_entity`
-- `vw_pm_entity_topology_projection`
-- `vw_pm_raw_with_entity_topology`
-- `vw_pm_raw_with_counter_semantics`
-- `vw_pm_counter_agg_by_entity_time_counter`
-- `vw_pm_entity_counter_coverage`
-- `vw_kpi_scope_entity_counter_base`
-
-### Coverage and Completeness
-
-- `vw_pm_logical_entity_counts_by_time`
-- `vw_pm_site_coverage`
-- `vw_pm_region_coverage`
-- `vw_semantic_counter_mapping_gaps`
-- `vw_semantic_kpi_input_coverage`
-- `vw_pm_cell_entity_counts_by_interval`
-- `vw_pm_cell_entity_counts_timeline`
-- `vw_pm_combined_ltefdd_cell_coverage_timeline`
-- `vw_pm_daily_family_coverage`
-- `vw_pm_daily_combined_ltefdd_coverage`
-
-### KPI Semantic Views
-
-- `vw_semantic_kpi_definition_details`
-- `vw_semantic_provisional_kpis`
-- `vw_semantic_kpi_base_inputs`
-
-### Ingest Observability
-
-- `vw_file_ingest_observability`
-- `vw_file_lifecycle_exceptions`
-
-## Example SQL Queries
-
-### Ingest observability
-
-```sql
-SELECT
-    source_file,
-    status,
-    raw_row_count,
-    lifecycle_status,
-    normalization_status,
-    processed_at
-FROM vw_file_ingest_observability
-ORDER BY processed_at DESC;
-```
-
-### Lifecycle exceptions
-
-```sql
-SELECT
-    source_file,
-    status,
-    lifecycle_status,
-    final_file_path,
-    error_message
-FROM vw_file_lifecycle_exceptions
-ORDER BY processed_at DESC;
-```
-
-### Normalization status
-
-```sql
-SELECT
-    source_file,
-    status,
-    normalization_status,
-    normalized_at,
-    normalization_error
-FROM vw_file_ingest_observability
-ORDER BY processed_at DESC;
-```
-
-### Daily LTEFDD coverage by family
-
-```sql
-SELECT
-    collect_date,
-    dataset_family,
-    distinct_cell_entities,
-    distinct_collect_times,
-    distinct_source_files
-FROM vw_pm_daily_family_coverage
-WHERE dataset_family IN ('PM/itbbu/ltefdd', 'PM/sdr/ltefdd')
-ORDER BY collect_date, dataset_family;
-```
-
-### Daily combined LTEFDD coverage
-
-```sql
-SELECT
-    collect_date,
-    combined_observed_cells,
-    row_count,
-    distinct_source_files
-FROM vw_pm_daily_combined_ltefdd_coverage
-ORDER BY collect_date;
-```
-
-## Current Scope vs Future Scope
-
-### Current Scope
-
-- single-vendor ZTE LTE PM focus
-- governed local and FTP-style archive ingestion
-- raw fact persistence with real entity dimensions
-- entity normalization as a separate step
-- topology enrichment as a separate step
-- topology reference loading commands and sync flow
-- semantic KPI dictionary and KPI definition framework
-- SQL-first coverage and observability layer
-- verified KPI activation for 7 KPIs across PRB, BLER, and direct-mapped RRC slices
-- topology-aware verified KPI rollup views at site/time and region/time
-- validation views and CLI inspection commands for the verified KPI stack
-- API baseline for reads and manual operator actions
-- minimal operator UI baseline for inspection and manual control
-- entity-time KPI Results and PRB/BLER validation stabilized for local operator use
-- KPI execution remains gated by verified counter semantics for any new KPI family
-
-### Future Scope
-
-- broader verified KPI families beyond PRB, BLER, and direct-mapped RRC
-- bundled RRC accessibility KPI rollout only after explicit review
-- throughput KPI rollout only after authoritative vendor evidence resolves provisional volume lineage
-- curated topology reference data packaging and loading workflow completion
-- CM-driven topology derivation and authoritative site/region/reporting mapping analysis
-- stabilization and optimization of site/time and region/time KPI paths after topology reference data is loaded
-- configurable local source roots and richer operational config
-- better bulk-loading performance for larger daily slices
-- broader enrichment around site/region/inventory data
-- deeper operator-platform expansion beyond the current baseline
+- scheduler-first operational expansion
+- broader KPI-family rollout
+- throughput rollout
 
 ## Development
 
 Common commands:
 
 ```bash
-make init-db
-make summarize-coverage LIMIT=20
-make summarize-coverage-timeline LIMIT=20
-make compare-expected-cells EXPECTED=10251
-make compare-expected-cells-timeline EXPECTED=10251 LIMIT=20
-make reconcile-ingest-files LIMIT=100
-make backfill-lifecycle-status LIMIT=100
-make test
-make check
-```
-
-Checks:
-
-```bash
+python -m lte_pm_platform.cli init-db
+python -m lte_pm_platform.cli sync-entities
+python -m lte_pm_platform.cli sync-topology
+python -m lte_pm_platform.cli ftp-status
 pytest
 ruff check .
+cd ui && npm run build
 ```
+
+For deeper operational workflows, reference loads, CLI inventories, and SQL/view notes, see:
+
+- `docs/reference.md`
