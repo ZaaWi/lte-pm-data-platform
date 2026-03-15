@@ -28,13 +28,22 @@ from lte_pm_platform.api.routers.operations import (
     sync_topology,
 )
 from lte_pm_platform.api.routers.system import health, ready
-from lte_pm_platform.api.routers.topology import region_coverage, site_coverage, unmapped_entities
+from lte_pm_platform.api.routers.topology import (
+    get_active_snapshot,
+    get_snapshot_summary,
+    list_snapshots,
+    reconcile_snapshot,
+    region_coverage,
+    site_coverage,
+    unmapped_entities,
+)
 from lte_pm_platform.api.schemas.operations import EmptyOperationRequest, FtpRunCycleRequest, RetryIdsRequest
 from lte_pm_platform.config import Settings
 from lte_pm_platform.pipeline.orchestration.run_lock import PipelineCycleLockError
 from lte_pm_platform.services.ingestion_service import IngestionService
 from lte_pm_platform.services.kpi_service import KpiService
 from lte_pm_platform.services.operation_service import OperationService
+from lte_pm_platform.services.topology_management_service import TopologyManagementService
 from lte_pm_platform.services.topology_service import TopologyService
 
 
@@ -81,6 +90,8 @@ def test_create_app_registers_expected_routes() -> None:
     assert "/api/v1/ready" in paths
     assert "/api/v1/ingestion/status" in paths
     assert "/api/v1/topology/site-coverage" in paths
+    assert "/api/v1/topology/workbook-preview" in paths
+    assert "/api/v1/topology/snapshots" in paths
     assert "/api/v1/kpi-results/entity-time" in paths
     assert "/api/v1/kpi-validation/region-time" in paths
     assert "/api/v1/operations/ftp-run-cycle" in paths
@@ -194,6 +205,54 @@ def test_region_coverage(monkeypatch) -> None:  # noqa: ANN001
     response = region_coverage(limit=10, connection=FakeConnection())
 
     assert response.rows[0]["region_code"] == "R1"
+
+
+def test_list_topology_snapshots(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        TopologyManagementService,
+        "list_snapshots",
+        lambda self: [{"snapshot_id": 1, "status": "previewed"}],
+    )
+
+    response = list_snapshots(connection=FakeConnection())
+
+    assert response.rows[0]["snapshot_id"] == 1
+
+
+def test_get_topology_snapshot_summary(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        TopologyManagementService,
+        "get_snapshot_summary",
+        lambda self, snapshot_id: {"snapshot_id": snapshot_id, "status": "previewed"},
+    )
+
+    response = get_snapshot_summary(snapshot_id=7, connection=FakeConnection())
+
+    assert response.snapshot["snapshot_id"] == 7
+
+
+def test_get_active_topology_snapshot(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        TopologyManagementService,
+        "get_active_snapshot",
+        lambda self: {"snapshot_id": 3, "is_active_snapshot": True},
+    )
+
+    response = get_active_snapshot(connection=FakeConnection())
+
+    assert response.snapshot["snapshot_id"] == 3
+
+
+def test_reconcile_topology_snapshot(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        TopologyManagementService,
+        "reconcile_snapshot",
+        lambda self, snapshot_id: {"snapshot_id": snapshot_id, "status": "reconciled"},
+    )
+
+    response = reconcile_snapshot(snapshot_id=9, connection=FakeConnection())
+
+    assert response.snapshot["status"] == "reconciled"
 
 
 def test_kpi_results_entity_time(monkeypatch) -> None:  # noqa: ANN001

@@ -143,6 +143,7 @@ Not included in the first system version:
 - local topology reference seeding from `LTE Project Parameter-20260301.xlsx`
 - materially mapped local topology enrichment after loading topology references and rerunning `sync-topology`
 - performant operator-facing PRB and BLER `site-time` / `region-time` API paths using direct fast paths over narrowed raw facts and topology enrichment
+- workbook-driven topology snapshot, reconciliation, and guarded activation baseline through the API/UI
 
 ### Partially Implemented
 
@@ -158,9 +159,9 @@ Remaining work:
 
 Remaining work:
 
-- validate workbook-derived topology seeds against CM or another authoritative source
+- validate workbook-derived topology snapshots against CM or another authoritative source
 - harden reporting hierarchy quality and parentage rules
-- resolve remaining unmapped and conflicting entities conservatively
+- resolve remaining unmapped and conflicting workbook mappings conservatively
 - define which topology fields remain curated versus derived
 
 #### CM-driven topology mapping analysis
@@ -217,7 +218,7 @@ Convenience path:
 
 Target additions:
 
-- validate the current workbook-derived topology seed set against CM or another authoritative source
+- validate the current workbook-derived topology snapshot workflow against CM or another authoritative source
 - harden the region/site/reporting mapping model where workbook conflicts exist
 - close the remaining gap between local development topology and an authoritative production-quality topology source
 - retain the current API/UI/operator baseline; do not broaden to new KPI families before topology quality is established

@@ -46,6 +46,7 @@ Implemented:
 - verified KPI execution
 - FastAPI API baseline
 - minimal in-repo operator UI
+- topology workbook snapshot, reconciliation, and activation baseline
 
 Verified working now:
 
@@ -55,6 +56,9 @@ Verified working now:
 - KPI Results `entity-time` in the browser
 - KPI Validation `entity-time` for PRB and BLER
 - KPI Results `site-time` and `region-time` for PRB and BLER in the browser
+- topology workbook preview upload through API/UI
+- topology snapshot history, reconciliation summary, and reconciliation detail inspection
+- guarded topology snapshot apply flow with blocking-error enforcement
 - KPI Results date filters normalized to day bounds
 - KPI Results offset-based paging with `Rows`, `Previous`, `Next`
 
@@ -73,10 +77,19 @@ Site/region operator stabilization now in place for PRB and BLER:
 - `dataset_family` is required for PRB and BLER `site-time` / `region-time`
 - if `site-time` / `region-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
 
+Topology workbook management now in place:
+
+- each workbook upload becomes a stored topology snapshot candidate
+- workbook snapshots are previewed before activation
+- reconciliation persists blocking errors, warnings, and drift details
+- Apply is intended for reconciled snapshots without blocking issues
+- `sync-topology` remains the activation follow-up that materializes `ref_lte_entity_topology_enrichment`
+
 ## Current Limitations
 
 - site/region outputs are now meaningful locally only after the topology reference CSVs are loaded and `sync-topology` has been rerun
 - the current local topology seed set is derived from the Project Parameters workbook and is useful for local development, but it is not yet the authoritative production mapping source
+- workbook-driven topology is the current authority baseline; CM-backed authority is not complete yet
 - CM-driven topology derivation and reporting-hierarchy authority are still open work
 - RRC validation fast-path is not yet the primary verified local path; PRB and BLER entity-time validation are the stabilized operator path today
 - throughput KPIs remain blocked pending authoritative vendor evidence for provisional volume lineage
@@ -215,15 +228,24 @@ Also verify the optimized site/region operator path for PRB and BLER:
 - `dataset_family = PM/sdr/ltefdd` or `PM/itbbu/ltefdd`
 - omit dates to use the latest `collect_time`, or set the day explicitly
 
+Use the `Topology` page for workbook-driven topology operations:
+
+- upload workbook and create a preview snapshot
+- run reconciliation against PM and the current active snapshot
+- inspect blocking errors, warnings, and drift details
+- apply a reconciled snapshot
+- run `sync-topology`
+
 ## Next Milestone
 
-**CM-driven topology mapping analysis and topology-quality hardening**
+**Workbook-driven topology quality hardening and CM-backed authority analysis**
 
 Immediate work:
 
 - validate the workbook-derived local topology seed set against authoritative CM or inventory sources
 - decide which topology fields remain curated and which should be derived from CM
 - harden the reporting hierarchy and site/region authority model
+- extend snapshot reconciliation quality rules where workbook conflicts are still tolerated manually
 - extend the same site/region fast-path approach to remaining operator reads where justified
 
 Not the immediate priority:

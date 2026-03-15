@@ -34,6 +34,36 @@ These were generated conservatively from:
 
 The current local seed set is good enough for local development and operator validation. It should not yet be treated as the final authoritative production mapping source.
 
+## Topology Workbook Snapshot Workflow
+
+The current topology authority baseline is workbook-driven.
+
+Implemented workflow:
+
+- upload workbook through the API/UI
+- extract release date from the workbook filename when present
+- parse the `4G LTE` sheet into normalized snapshot rows
+- store the upload as a candidate topology snapshot
+- reconcile the candidate snapshot against:
+  - PM entity identity
+  - the current active snapshot
+- inspect detailed issues before activation
+- apply a reconciled snapshot into the live topology reference tables
+- run `sync-topology` to refresh `ref_lte_entity_topology_enrichment`
+
+Current hard blocks:
+
+- duplicate entity mapped to multiple sites
+- conflicting site to region mapping
+- parser errors on critical workbook keys
+
+Current soft warnings:
+
+- PM entities missing from workbook
+- workbook entities missing from PM
+- workbook sites with no PM activity
+- normal drift versus the active snapshot
+
 Topology load workflow:
 
 ```bash
@@ -81,6 +111,19 @@ Important current guardrails:
 - KPI Results UI uses date inputs and normalizes them to day bounds
 - KPI Results UI uses offset-based paging with `Rows`, `Previous`, and `Next`
 - operator-facing PRB and BLER `site-time` / `region-time` API routes use direct fast paths over narrowed raw facts plus topology enrichment instead of the heavier nested verified SQL views
+- topology snapshot Apply is intended only after reconciliation and is blocked when blocking issues are present
+
+Current topology API additions:
+
+- `POST /api/v1/topology/workbook-preview`
+- `GET /api/v1/topology/snapshots`
+- `GET /api/v1/topology/snapshots/{snapshot_id}`
+- `GET /api/v1/topology/active-snapshot`
+- `POST /api/v1/topology/snapshots/{snapshot_id}/reconcile`
+- `GET /api/v1/topology/reconciliations/{reconciliation_id}/details`
+- `GET /api/v1/topology/snapshots/{snapshot_id}/drift`
+- `POST /api/v1/topology/snapshots/{snapshot_id}/apply`
+- `POST /api/v1/topology/sync`
 
 ## Operator UI Baseline
 
@@ -93,6 +136,15 @@ Pages currently implemented:
 - Topology
 
 The UI is intentionally table- and form-based. It is not a charts-first analytics layer.
+
+Topology page additions now include:
+
+- workbook upload / preview
+- snapshot history
+- reconciliation summary
+- reconciliation detail inspection
+- apply snapshot
+- run sync-topology
 
 ## Useful Commands
 

@@ -28,9 +28,10 @@ declare global {
 const apiBase = window.__LTE_PM_API_BASE__ ?? 'http://localhost:8000/api/v1';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const isFormData = init?.body instanceof FormData;
   const response = await fetch(`${apiBase}${path}`, {
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(init?.headers ?? {})
     },
     ...init
@@ -67,6 +68,25 @@ export const api = {
   getUnmappedEntities: (limit = 20) => request<RowsResponse>(`/topology/unmapped-entities${buildQuery({ limit })}`),
   getSiteCoverage: (limit = 20) => request<RowsResponse>(`/topology/site-coverage${buildQuery({ limit })}`),
   getRegionCoverage: (limit = 20) => request<RowsResponse>(`/topology/region-coverage${buildQuery({ limit })}`),
+  uploadTopologyWorkbook: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<{ snapshot: Record<string, unknown> }>('/topology/workbook-preview', {
+      method: 'POST',
+      body: form
+    });
+  },
+  getTopologySnapshots: () => request<RowsResponse>('/topology/snapshots'),
+  getTopologySnapshot: (snapshotId: number) => request<{ snapshot: Record<string, unknown> }>(`/topology/snapshots/${snapshotId}`),
+  getActiveTopologySnapshot: () => request<{ snapshot: Record<string, unknown> }>('/topology/active-snapshot'),
+  reconcileTopologySnapshot: (snapshotId: number) =>
+    request<{ snapshot: Record<string, unknown> }>(`/topology/snapshots/${snapshotId}/reconcile`, { method: 'POST' }),
+  getTopologyReconciliationDetails: (reconciliationId: number, params: Record<string, string | number | undefined | null>) =>
+    request<RowsResponse>(`/topology/reconciliations/${reconciliationId}/details${buildQuery(params)}`),
+  getTopologyDrift: (snapshotId: number) => request<{ snapshot: Record<string, unknown> }>(`/topology/snapshots/${snapshotId}/drift`),
+  applyTopologySnapshot: (snapshotId: number) =>
+    request<OperationResponse>(`/topology/snapshots/${snapshotId}/apply`, { method: 'POST' }),
+  syncTopologyViaTopologyApi: () => request<OperationResponse>('/topology/sync', { method: 'POST' }),
   getKpiResults: (grain: KpiGrain, params: Record<string, string | number | undefined | null>) =>
     request<RowsResponse>(`/kpi-results/${grain}${buildQuery(params)}`),
   getKpiValidation: (grain: KpiGrain, params: Record<string, string | number | undefined | null>) =>
