@@ -12,6 +12,9 @@ class FtpRemoteFileRepository:
     def __init__(self, connection: Connection) -> None:
         self.connection = connection
 
+    def commit(self) -> None:
+        self.connection.commit()
+
     def upsert_discovered_files(
         self,
         *,

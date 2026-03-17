@@ -34,3 +34,19 @@ class OperationResponse(BaseModel):
     operation: str
     status: str
     result: dict[str, Any]
+
+
+class FtpRunEnqueueResponse(BaseModel):
+    operation: str
+    status: str
+    run_id: int
+    run: dict[str, Any]
+
+
+class FtpRunResponse(BaseModel):
+    run: dict[str, Any] | None
+
+
+class FtpRunEventsResponse(BaseModel):
+    count: int = Field(ge=0)
+    rows: list[dict[str, Any]]

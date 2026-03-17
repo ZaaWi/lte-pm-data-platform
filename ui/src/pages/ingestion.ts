@@ -64,6 +64,19 @@ export const page: PageModule = {
         </section>
       </div>
       <div class="grid cols-2">
+        <section class="panel">
+          <h3>FTP Runs</h3>
+          <div class="small">Running runs</div>
+          <div id="ftp-runs-running"></div>
+          <div class="small" style="margin-top:0.75rem;">Recent runs</div>
+          <div id="ftp-runs-recent"></div>
+        </section>
+        <section class="panel">
+          <h3>Latest run events</h3>
+          <div id="ftp-run-events"></div>
+        </section>
+      </div>
+      <div class="grid cols-2">
         <section class="panel"><h3>Failures</h3><div id="failures-table"></div></section>
         <section class="panel"><h3>Reconciliation preview</h3><div id="reconciliation-table"></div></section>
       </div>
@@ -75,18 +88,36 @@ export const page: PageModule = {
     const ftpCycleResult = container.querySelector<HTMLElement>('#ftp-cycle-result');
     const retryDownloadResult = container.querySelector<HTMLElement>('#retry-download-result');
     const retryIngestResult = container.querySelector<HTMLElement>('#retry-ingest-result');
-    if (!summaryEl || !failuresEl || !reconciliationEl || !ftpCycleResult || !retryDownloadResult || !retryIngestResult) return;
+    const ftpRunsRunning = container.querySelector<HTMLElement>('#ftp-runs-running');
+    const ftpRunsRecent = container.querySelector<HTMLElement>('#ftp-runs-recent');
+    const ftpRunEvents = container.querySelector<HTMLElement>('#ftp-run-events');
+    if (!summaryEl || !failuresEl || !reconciliationEl || !ftpCycleResult || !retryDownloadResult || !retryIngestResult || !ftpRunsRunning || !ftpRunsRecent || !ftpRunEvents) return;
 
     const load = async () => {
       try {
-        const [status, failures, reconciliation] = await Promise.all([
+        const [status, failures, reconciliation, runningRuns, recentRuns] = await Promise.all([
           api.getIngestionStatus(10),
           api.getIngestionFailures(20),
-          api.getReconciliationPreview(20)
+          api.getReconciliationPreview(20),
+          api.getFtpRuns(10, 'running'),
+          api.getFtpRuns(20)
         ]);
         summaryEl.innerHTML = renderKeyValue(status.summary);
         failuresEl.innerHTML = renderTable(failures.rows);
         reconciliationEl.innerHTML = renderTable(reconciliation.rows);
+        ftpRunsRunning.innerHTML = renderTable(
+          runningRuns.rows.map(normalizeRunRow)
+        );
+        ftpRunsRecent.innerHTML = renderTable(
+          recentRuns.rows.map(normalizeRunRow)
+        );
+        const latestRun = recentRuns.rows[0];
+        if (latestRun && typeof latestRun.id === 'number') {
+          const events = await api.getFtpRunEvents(latestRun.id, 20);
+          ftpRunEvents.innerHTML = renderTable(events.rows.map((row) => ({ ...row, metrics_json: formatMetrics(row.metrics_json) })));
+        } else {
+          ftpRunEvents.innerHTML = '<div class="status">No runs yet.</div>';
+        }
       } catch (error) {
         setMessage(container, `Ingestion page load failed: ${String(error)}`, 'error');
       }
@@ -98,7 +129,7 @@ export const page: PageModule = {
 
     cycleForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
-      setMessage(ftpCycleResult, 'Running FTP cycle…');
+      setMessage(ftpCycleResult, 'Queueing FTP cycle…');
       const formData = new FormData(cycleForm);
       const familiesRaw = String(formData.get('families') ?? '').trim();
       try {
@@ -111,7 +142,11 @@ export const page: PageModule = {
           dry_run: formData.get('dry_run') === 'on',
           retry_failed: formData.get('retry_failed') === 'on'
         });
-        ftpCycleResult.innerHTML = renderKeyValue(response.result);
+        ftpCycleResult.innerHTML = renderKeyValue({
+          run_id: response.run_id,
+          status: response.status,
+          requested_at: response.run.requested_at
+        });
         await load();
       } catch (error) {
         setMessage(ftpCycleResult, `FTP cycle failed: ${String(error)}`, 'error');
@@ -145,5 +180,36 @@ export const page: PageModule = {
     });
 
     await load();
+    const pollHandle = window.setInterval(() => {
+      if (!container.isConnected || window.location.hash !== '#/ingestion') {
+        window.clearInterval(pollHandle);
+        return;
+      }
+      if (document.hidden) {
+        return;
+      }
+      void load();
+    }, 5000);
   }
 };
+
+function normalizeRunRow(row: Record<string, unknown>): Record<string, unknown> {
+  const summary = (row.summary_json as Record<string, unknown> | undefined) ?? {};
+  return {
+    id: row.id,
+    status: row.status,
+    requested_at: row.requested_at,
+    started_at: row.started_at,
+    finished_at: row.finished_at,
+    scanned: summary.scanned ?? 0,
+    downloaded: summary.downloaded ?? 0,
+    ingested: summary.ingested ?? 0,
+    failed: Number(summary.failed_downloads ?? 0) + Number(summary.failed_ingests ?? 0),
+    trigger_source: row.trigger_source
+  };
+}
+
+function formatMetrics(value: unknown): string {
+  if (!value || typeof value !== 'object') return '';
+  return JSON.stringify(value);
+}

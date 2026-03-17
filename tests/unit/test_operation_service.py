@@ -26,11 +26,40 @@ class FakeSettings:
     ftp_username = "user"
     ftp_password = "pass"
     ftp_remote_directory = "/remote"
+    ftp_remote_directories = ("/remote",)
     ftp_passive_mode = True
 
 
 def make_service() -> OperationService:
     return OperationService(connection=FakeConnection(), settings=FakeSettings())
+
+
+def make_settings(**overrides):  # noqa: ANN001
+    values = {
+        "ftp_host": "ftp.example.com",
+        "ftp_port": 21,
+        "ftp_username": "user",
+        "ftp_password": "pass",
+        "ftp_remote_directory": "/remote",
+        "ftp_remote_directories": ("/remote",),
+        "ftp_passive_mode": True,
+    }
+    values.update(overrides)
+    return type("Settings", (), values)()
+
+
+def test_build_ftp_client_rejects_missing_username() -> None:
+    service = OperationService(connection=FakeConnection(), settings=make_settings(ftp_username=""))
+
+    with pytest.raises(OperationValidationError, match="FTP_USERNAME is not configured"):
+        service._build_ftp_client()
+
+
+def test_build_ftp_client_rejects_missing_password() -> None:
+    service = OperationService(connection=FakeConnection(), settings=make_settings(ftp_password=""))
+
+    with pytest.raises(OperationValidationError, match="FTP_PASSWORD is not configured"):
+        service._build_ftp_client()
 
 
 def test_run_ftp_cycle_returns_summary(monkeypatch) -> None:  # noqa: ANN001
@@ -53,6 +82,83 @@ def test_run_ftp_cycle_returns_summary(monkeypatch) -> None:  # noqa: ANN001
     )
 
     assert result == {"scanned": 10, "downloaded": 2}
+
+
+def test_enqueue_ftp_cycle_returns_run(monkeypatch) -> None:  # noqa: ANN001
+    service = make_service()
+    fake_repo = type(
+        "Repo",
+        (),
+        {
+            "create_run": lambda self, **kwargs: {"id": 9, "status": "queued", "parameters_json": kwargs["parameters"]},
+        },
+    )()
+    monkeypatch.setattr(
+        "lte_pm_platform.services.operation_service.FtpCycleRunRepository",
+        lambda connection: fake_repo,
+    )
+
+    result = service.enqueue_ftp_cycle(
+        limit=5,
+        start=date(2026, 3, 5),
+        end=date(2026, 3, 5),
+        revision_policy="additive",
+        families=["PM/sdr/ltefdd"],
+        dry_run=True,
+        retry_failed=False,
+        trigger_source="ui",
+    )
+
+    assert result["id"] == 9
+    assert result["parameters_json"]["limit"] == 5
+
+
+def test_execute_ftp_cycle_run_marks_success(monkeypatch) -> None:  # noqa: ANN001
+    service = make_service()
+    events: list[tuple[str, str, str, object]] = []
+
+    class FakeRunRepo:
+        def get_run(self, *, run_id: int):  # noqa: ANN202
+            return {
+                "id": run_id,
+                "parameters_json": {
+                    "limit": 1,
+                    "start": None,
+                    "end": None,
+                    "revision_policy": "additive",
+                    "families": None,
+                    "dry_run": True,
+                    "retry_failed": False,
+                },
+                "summary_json": {},
+            }
+
+        def append_event(self, **kwargs) -> None:  # noqa: ANN001
+            events.append((kwargs["stage"], kwargs["level"], kwargs["message"], kwargs["metrics"]))
+
+        def update_summary(self, **kwargs) -> None:  # noqa: ANN001
+            return None
+
+        def mark_succeeded(self, **kwargs):  # noqa: ANN001, ANN202
+            return {"id": kwargs["run_id"], "status": "succeeded"}
+
+        def mark_failed(self, **kwargs):  # noqa: ANN001, ANN202
+            raise AssertionError("mark_failed should not be called")
+
+    monkeypatch.setattr(
+        "lte_pm_platform.services.operation_service.FtpCycleRunRepository",
+        lambda connection: FakeRunRepo(),
+    )
+    monkeypatch.setattr(
+        service,
+        "_run_ftp_cycle_with_callbacks",
+        lambda **kwargs: {"scanned": 5, "downloaded": 0, "ingested": 0},
+    )
+
+    result = service.execute_ftp_cycle_run(run_id=4)
+
+    assert result["scanned"] == 5
+    assert events[0][0] == "discover"
 
 
 def test_run_ftp_cycle_rejects_invalid_family() -> None:

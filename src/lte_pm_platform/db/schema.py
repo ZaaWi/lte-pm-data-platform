@@ -11,6 +11,7 @@ SQL_INIT_ORDER = (
     "002_tables_raw.sql",
     "003_tables_audit.sql",
     "003a_tables_ftp_registry.sql",
+    "003b_tables_ftp_cycle_runs.sql",
     "004_reference_tables.sql",
     "004b_topology_snapshot_tables.sql",
     "006_kpi_foundation.sql",

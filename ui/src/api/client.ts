@@ -12,6 +12,25 @@ export interface OperationResponse {
   result: Record<string, unknown>;
 }
 
+export interface FtpRunRecord {
+  id: number;
+  requested_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  status: string;
+  trigger_source: string;
+  parameters_json: Record<string, unknown>;
+  summary_json: Record<string, unknown>;
+  error_message: string | null;
+}
+
+export interface FtpRunEnqueueResponse {
+  operation: string;
+  status: string;
+  run_id: number;
+  run: FtpRunRecord;
+}
+
 export interface IngestionStatusResponse {
   status_counts: Array<Record<string, unknown>>;
   summary: Record<string, unknown>;
@@ -93,7 +112,12 @@ export const api = {
   getKpiValidation: (grain: KpiGrain, params: Record<string, string | number | undefined | null>) =>
     request<RowsResponse>(`/kpi-validation/${grain}${buildQuery(params)}`),
   runFtpCycle: (payload: Record<string, unknown>) =>
-    request<OperationResponse>('/operations/ftp-run-cycle', { method: 'POST', body: JSON.stringify(payload) }),
+    request<FtpRunEnqueueResponse>('/operations/ftp-run-cycle', { method: 'POST', body: JSON.stringify(payload) }),
+  getFtpRuns: (limit = 20, status?: string) =>
+    request<RowsResponse>(`/operations/ftp-runs${buildQuery({ limit, status: status ?? null })}`),
+  getFtpRun: (runId: number) => request<{ run: FtpRunRecord | null }>(`/operations/ftp-runs/${runId}`),
+  getFtpRunEvents: (runId: number, limit = 100) =>
+    request<RowsResponse>(`/operations/ftp-runs/${runId}/events${buildQuery({ limit })}`),
   retryDownload: (ids: number[]) =>
     request<OperationResponse>('/operations/ftp-retry-download', { method: 'POST', body: JSON.stringify({ ids }) }),
   retryIngest: (ids: number[]) =>

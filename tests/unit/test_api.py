@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
+import importlib
 
 import pytest
 from fastapi.middleware.cors import CORSMiddleware
 
-from lte_pm_platform.api.app import LOCAL_DEV_CORS_ORIGINS, create_app
+from lte_pm_platform.api.app import LOCAL_DEV_CORS_ORIGINS, STALE_RUN_ERROR_MESSAGE, create_app, recover_stale_ftp_cycle_runs
 from lte_pm_platform.api.routers.ingestion import (
     ingestion_failure_detail,
     ingestion_failures,
@@ -21,9 +21,12 @@ from lte_pm_platform.api.routers.kpi import (
     kpi_validation_site_time,
 )
 from lte_pm_platform.api.routers.operations import (
+    get_ftp_run,
+    get_ftp_run_events,
     ftp_retry_download,
     ftp_retry_ingest,
     ftp_run_cycle,
+    list_ftp_runs,
     sync_entities,
     sync_topology,
 )
@@ -35,14 +38,14 @@ from lte_pm_platform.api.routers.topology import (
     reconcile_snapshot,
     region_coverage,
     site_coverage,
+    topology_summary,
     unmapped_entities,
 )
 from lte_pm_platform.api.schemas.operations import EmptyOperationRequest, FtpRunCycleRequest, RetryIdsRequest
 from lte_pm_platform.config import Settings
-from lte_pm_platform.pipeline.orchestration.run_lock import PipelineCycleLockError
 from lte_pm_platform.services.ingestion_service import IngestionService
 from lte_pm_platform.services.kpi_service import KpiService
-from lte_pm_platform.services.operation_service import OperationService
+from lte_pm_platform.services.operation_service import OperationService, OperationValidationError
 from lte_pm_platform.services.topology_management_service import TopologyManagementService
 from lte_pm_platform.services.topology_service import TopologyService
 
@@ -78,6 +81,7 @@ def make_settings() -> Settings:
         ftp_username="user",
         ftp_password="pass",
         ftp_remote_directory="/",
+        ftp_remote_directories=("/",),
         ftp_passive_mode=True,
     )
 
@@ -95,6 +99,8 @@ def test_create_app_registers_expected_routes() -> None:
     assert "/api/v1/kpi-results/entity-time" in paths
     assert "/api/v1/kpi-validation/region-time" in paths
     assert "/api/v1/operations/ftp-run-cycle" in paths
+    assert "/api/v1/operations/ftp-runs" in paths
+    assert "/api/v1/operations/ftp-runs/{run_id}" in paths
     assert "/api/v1/operations/sync-topology" in paths
 
 
@@ -106,6 +112,75 @@ def test_create_app_registers_local_dev_cors_middleware() -> None:
     assert cors_middleware.kwargs["allow_origins"] == LOCAL_DEV_CORS_ORIGINS
     assert cors_middleware.kwargs["allow_methods"] == ["GET", "POST", "OPTIONS"]
     assert cors_middleware.kwargs["allow_headers"] == ["*"]
+
+
+def test_recover_stale_ftp_cycle_runs(monkeypatch) -> None:  # noqa: ANN001
+    class RecoveryCursor:
+        def execute(self, query: str) -> None:
+            self.query = query
+
+        def fetchone(self):  # noqa: ANN201
+            return ("ftp_cycle_run", "ftp_cycle_run_event")
+
+        def __enter__(self):  # noqa: ANN201
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+    class FakeRepo:
+        def __init__(self, connection) -> None:  # noqa: ANN001
+            self.connection = connection
+
+        def recover_stale_running_runs(self, *, error_message: str):  # noqa: ANN202
+            assert error_message == STALE_RUN_ERROR_MESSAGE
+            return [{"id": 1}, {"id": 2}]
+
+    class FakeContext:
+        def __enter__(self):  # noqa: ANN201
+            return type("Connection", (), {"cursor": lambda self: RecoveryCursor()})()
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+    app_module = importlib.import_module("lte_pm_platform.api.app")
+    monkeypatch.setattr(app_module, "get_settings", make_settings)
+    monkeypatch.setattr(app_module, "get_connection", lambda settings: FakeContext())
+    monkeypatch.setattr(app_module, "FtpCycleRunRepository", FakeRepo)
+
+    assert recover_stale_ftp_cycle_runs() == 2
+
+
+def test_recover_stale_ftp_cycle_runs_skips_when_tables_missing(monkeypatch) -> None:  # noqa: ANN001
+    class MissingCursor:
+        def execute(self, query: str) -> None:
+            self.query = query
+
+        def fetchone(self):  # noqa: ANN201
+            return (None, None)
+
+        def __enter__(self):  # noqa: ANN201
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+    class MissingConnection:
+        def cursor(self):  # noqa: ANN201
+            return MissingCursor()
+
+    class FakeContext:
+        def __enter__(self):  # noqa: ANN201
+            return MissingConnection()
+
+        def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+    app_module = importlib.import_module("lte_pm_platform.api.app")
+    monkeypatch.setattr(app_module, "get_settings", make_settings)
+    monkeypatch.setattr(app_module, "get_connection", lambda settings: FakeContext())
+
+    assert recover_stale_ftp_cycle_runs() == 0
 
 
 def test_health() -> None:
@@ -205,6 +280,18 @@ def test_region_coverage(monkeypatch) -> None:  # noqa: ANN001
     response = region_coverage(limit=10, connection=FakeConnection())
 
     assert response.rows[0]["region_code"] == "R1"
+
+
+def test_topology_summary(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        TopologyService,
+        "summarize_topology_overview",
+        lambda self: {"total_entities": 10, "distinct_sites": 5},
+    )
+
+    response = topology_summary(connection=FakeConnection())
+
+    assert response["summary"]["total_entities"] == 10
 
 
 def test_list_topology_snapshots(monkeypatch) -> None:  # noqa: ANN001
@@ -365,20 +452,33 @@ def test_kpi_validation_site_time(monkeypatch) -> None:  # noqa: ANN001
 def test_kpi_validation_region_time(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         KpiService,
-        "list_validation",
+        "list_validation_filtered",
         lambda self, **kwargs: [{"dataset_family": "PM/sdr/ltefdd", "region_time_rows": 4}],
     )
 
-    response = kpi_validation_region_time(family="bler", connection=FakeConnection())
+    response = kpi_validation_region_time(family="bler", dataset_family="PM/sdr/ltefdd", connection=FakeConnection())
 
     assert response.rows[0]["region_time_rows"] == 4
+
+
+def test_kpi_validation_site_time_requires_dataset_family(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        KpiService,
+        "list_validation_filtered",
+        lambda self, **kwargs: (_ for _ in ()).throw(ValueError("dataset_family is required for site-time and region-time KPI validation")),
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        kpi_validation_site_time(family="prb", dataset_family=None, connection=FakeConnection())
+
+    assert exc_info.value.status_code == 400
 
 
 def test_ftp_run_cycle_route(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         OperationService,
-        "run_ftp_cycle",
-        lambda self, **kwargs: {"scanned": 10, "downloaded": 3},
+        "enqueue_ftp_cycle",
+        lambda self, **kwargs: {"id": 12, "requested_at": "2026-03-16T12:00:00", "status": "queued"},
     )
 
     response = ftp_run_cycle(
@@ -388,14 +488,15 @@ def test_ftp_run_cycle_route(monkeypatch) -> None:  # noqa: ANN001
     )
 
     assert response.operation == "ftp_run_cycle"
-    assert response.result["downloaded"] == 3
+    assert response.run_id == 12
+    assert response.status == "QUEUED"
 
 
-def test_ftp_run_cycle_route_lock_error(monkeypatch) -> None:  # noqa: ANN001
+def test_ftp_run_cycle_route_validation_error(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         OperationService,
-        "run_ftp_cycle",
-        lambda self, **kwargs: (_ for _ in ()).throw(PipelineCycleLockError(Path("/tmp/lock"))),
+        "enqueue_ftp_cycle",
+        lambda self, **kwargs: (_ for _ in ()).throw(OperationValidationError("bad request")),
     )
 
     with pytest.raises(Exception) as exc_info:
@@ -405,7 +506,45 @@ def test_ftp_run_cycle_route_lock_error(monkeypatch) -> None:  # noqa: ANN001
                 settings=make_settings(),
             )
 
-    assert exc_info.value.status_code == 409
+    assert exc_info.value.status_code == 400
+
+
+def test_list_ftp_runs_route(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        OperationService,
+        "list_ftp_cycle_runs",
+        lambda self, **kwargs: [{"id": 1, "status": "running"}],
+    )
+
+    response = list_ftp_runs(limit=10, status="running", connection=FakeConnection(), settings=make_settings())
+
+    assert response["count"] == 1
+    assert response["rows"][0]["id"] == 1
+
+
+def test_get_ftp_run_route(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        OperationService,
+        "get_ftp_cycle_run",
+        lambda self, **kwargs: {"id": 7, "status": "succeeded"},
+    )
+
+    response = get_ftp_run(run_id=7, connection=FakeConnection(), settings=make_settings())
+
+    assert response.run["status"] == "succeeded"
+
+
+def test_get_ftp_run_events_route(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        OperationService,
+        "list_ftp_cycle_run_events",
+        lambda self, **kwargs: [{"id": 1, "stage": "discover"}],
+    )
+
+    response = get_ftp_run_events(run_id=7, limit=10, connection=FakeConnection(), settings=make_settings())
+
+    assert response.count == 1
+    assert response.rows[0]["stage"] == "discover"
 
 
 def test_ftp_retry_download_route(monkeypatch) -> None:  # noqa: ANN001

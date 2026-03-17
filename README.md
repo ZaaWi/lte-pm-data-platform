@@ -10,6 +10,7 @@ It ingests PM archives into PostgreSQL, materializes stable logical entities, ap
 - streams inner CSVs without full extraction
 - stores normalized raw counter facts in PostgreSQL
 - tracks file audit, lifecycle, retries, and reconciliation
+- supports explicit multi-directory FTP source scanning with backward-compatible single-path mode
 - materializes deterministic `logical_entity_key` values with `sync-entities`
 - supports explicit topology enrichment with `sync-topology`
 - seeds local topology references from the LTE Project Parameters workbook
@@ -47,11 +48,15 @@ Implemented:
 - FastAPI API baseline
 - minimal in-repo operator UI
 - topology workbook snapshot, reconciliation, and activation baseline
+- backward-compatible multi-directory FTP source support for explicit PM archive directories
+- persistent FTP cycle run tracking and background execution
 
 Verified working now:
 
 - API `health` / `ready`
 - ingestion status, failures, and reconciliation preview
+- multi-directory FTP discovery across explicit configured PM source directories
+- persistent FTP cycle enqueue, run visibility, and background execution through API/UI
 - topology unmapped/site/region coverage endpoints
 - KPI Results `entity-time` in the browser
 - KPI Validation `entity-time` for PRB and BLER
@@ -76,6 +81,7 @@ Site/region operator stabilization now in place for PRB and BLER:
 - operator-facing PRB and BLER `site-time` / `region-time` API routes use direct fast paths instead of the heavy nested SQL views
 - `dataset_family` is required for PRB and BLER `site-time` / `region-time`
 - if `site-time` / `region-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
+- FTP source config supports either `FTP_REMOTE_DIRECTORY` or `FTP_REMOTE_DIRECTORIES`
 
 Topology workbook management now in place:
 
@@ -85,11 +91,20 @@ Topology workbook management now in place:
 - Apply is intended for reconciled snapshots without blocking issues
 - `sync-topology` remains the activation follow-up that materializes `ref_lte_entity_topology_enrichment`
 
+FTP cycle run model now in place:
+
+- `POST /api/v1/operations/ftp-run-cycle` enqueues a persistent run and returns immediately
+- background execution updates run status, summary, and stage events
+- refreshing the UI does not cancel backend work
+- the Ingestion page polls persistent run state instead of relying on transient in-page status
+
 ## Current Limitations
 
 - site/region outputs are now meaningful locally only after the topology reference CSVs are loaded and `sync-topology` has been rerun
+- multi-directory FTP support is implemented, but older local `ftp_remote_file` rows created before full remote-path identity may need a one-time registry cleanup or rebuild
 - the current local topology seed set is derived from the Project Parameters workbook and is useful for local development, but it is not yet the authoritative production mapping source
 - workbook-driven topology is the current authority baseline; CM-backed authority is not complete yet
+- the FTP background worker is currently a simple in-process Python worker inside the API app, not a separate queue service
 - CM-driven topology derivation and reporting-hierarchy authority are still open work
 - RRC validation fast-path is not yet the primary verified local path; PRB and BLER entity-time validation are the stabilized operator path today
 - throughput KPIs remain blocked pending authoritative vendor evidence for provisional volume lineage
@@ -107,6 +122,7 @@ Topology workbook management now in place:
 - psycopg
 - pytest
 - Ruff
+- Rust/Go remain deferred until profiling proves a parsing or concurrency hotspot
 
 ## Architecture
 
@@ -160,6 +176,20 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
 python -m lte_pm_platform.cli init-db
+```
+
+FTP source configuration:
+
+Single-directory mode:
+
+```dotenv
+FTP_REMOTE_DIRECTORY=/pm_archive/PM/sdr/ltefdd
+```
+
+Multi-directory mode:
+
+```dotenv
+FTP_REMOTE_DIRECTORIES=/pm_archive/PM/sdr/ltefdd,/pm_archive/PM/itbbu/ltefdd,/pm_archive/PM/itbbu/itbbuplat
 ```
 
 ### 2. Load a local PM sample and materialize entities

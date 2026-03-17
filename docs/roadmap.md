@@ -144,6 +144,8 @@ Not included in the first system version:
 - materially mapped local topology enrichment after loading topology references and rerunning `sync-topology`
 - performant operator-facing PRB and BLER `site-time` / `region-time` API paths using direct fast paths over narrowed raw facts and topology enrichment
 - workbook-driven topology snapshot, reconciliation, and guarded activation baseline through the API/UI
+- backward-compatible multi-directory FTP source support for explicit PM directory scanning
+- persistent FTP cycle run tracking with background execution and operator-visible run state
 
 ### Partially Implemented
 
@@ -181,6 +183,16 @@ Remaining work:
 - profile current Python, SQL, and PostgreSQL bottlenecks
 - optimize the existing stack before considering language-level rewrites
 - treat Rust/Go as later options only for proven hot paths
+
+#### FTP execution observability and operator continuity
+
+Implemented baseline:
+
+- `ftp_cycle_run` provides persistent run-level execution state
+- `ftp_cycle_run_event` records stage-level progress and metrics
+- FTP cycles are now enqueued from the API and executed in a background worker
+- UI refresh/navigation no longer implies loss of run visibility
+- API startup now reconciles stale prior-process `running` rows by marking them `failed` with a restart-interruption error
 
 ### Planned
 
@@ -228,6 +240,7 @@ Success condition:
 - local development keeps working mapped topology through the documented workflow
 - site/time and region/time operator paths remain meaningfully populated in local verification
 - the CM/reference-data strategy for authoritative topology mapping is clear enough to support the next stabilization step
+- persistent FTP run visibility remains stable while ingestion work moves off the request lifecycle
 
 ### Near-term milestone after topology reference-data completion
 

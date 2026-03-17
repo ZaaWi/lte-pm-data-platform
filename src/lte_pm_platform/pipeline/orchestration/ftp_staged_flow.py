@@ -1,13 +1,27 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic
+from typing import Any, Callable
 
 from lte_pm_platform.domain.models import IngestSummary
 from lte_pm_platform.pipeline.ingest.file_discovery import ParsedArchiveFile, RevisionPolicy
 from lte_pm_platform.pipeline.orchestration.run_lock import pipeline_cycle_lock
+
+logger = logging.getLogger(__name__)
+
+
+CycleEventCallback = Callable[[str, str, str, dict[str, Any] | None], None]
+CycleSummaryCallback = Callable[[dict[str, Any]], None]
+
+
+def _commit_repository_if_supported(repository) -> None:
+    commit = getattr(repository, "commit", None)
+    if callable(commit):
+        commit()
 
 
 def scan_remote_files(
@@ -15,30 +29,62 @@ def scan_remote_files(
     repository,
     client,
     source_name: str,
-    remote_directory: str,
+    remote_directory: str | None = None,
+    remote_directories: Sequence[str] | None = None,
     start: datetime | None,
     end: datetime | None,
     revision_policy: RevisionPolicy,
     families: Sequence[str] | None = None,
     persist: bool = True,
 ) -> dict[str, object]:
-    candidates = client.list_candidate_details(
-        start=start,
-        end=end,
-        revision_policy=revision_policy,
-    )
-    if families is not None:
-        selected_families = set(families)
-        candidates = [candidate for candidate in candidates if candidate.dataset_family in selected_families]
-    if persist:
-        summary = repository.upsert_discovered_files(
-            source_name=source_name,
-            remote_directory=remote_directory,
-            files=candidates,
+    configured_directories: list[str] = list(remote_directories or ())
+    if not configured_directories and remote_directory is not None:
+        configured_directories = [remote_directory]
+    if not configured_directories:
+        raise ValueError("at least one remote directory must be configured")
+
+    total_candidates: list[ParsedArchiveFile] = []
+    discovered = 0
+    updated = 0
+    scan_started = monotonic()
+    for directory in configured_directories:
+        directory_started = monotonic()
+        candidates = client.list_candidate_details(
+            remote_directory=directory,
+            start=start,
+            end=end,
+            revision_policy=revision_policy,
         )
-    else:
-        summary = {"discovered": 0, "updated": 0}
-    return {"candidates": candidates, "summary": summary}
+        if families is not None:
+            selected_families = set(families)
+            candidates = [candidate for candidate in candidates if candidate.dataset_family in selected_families]
+        total_candidates.extend(candidates)
+        if persist:
+            directory_summary = repository.upsert_discovered_files(
+                source_name=source_name,
+                remote_directory=directory,
+                files=candidates,
+            )
+            discovered += directory_summary["discovered"]
+            updated += directory_summary["updated"]
+        logger.info(
+            "ftp_discovery_complete remote_directory=%s candidate_count=%s discovered=%s updated=%s duration_seconds=%.3f",
+            directory,
+            len(candidates),
+            directory_summary["discovered"] if persist else 0,
+            directory_summary["updated"] if persist else 0,
+            monotonic() - directory_started,
+        )
+    summary = {"discovered": discovered, "updated": updated} if persist else {"discovered": 0, "updated": 0}
+    logger.info(
+        "ftp_discovery_batch_complete remote_directories=%s candidate_count=%s discovered=%s updated=%s duration_seconds=%.3f",
+        configured_directories,
+        len(total_candidates),
+        summary["discovered"],
+        summary["updated"],
+        monotonic() - scan_started,
+    )
+    return {"candidates": total_candidates, "summary": summary}
 
 
 def download_registry_files(
@@ -57,11 +103,23 @@ def download_registry_files(
     )
     results: list[dict[str, object]] = []
     for row in rows:
+        download_started = monotonic()
         try:
             local_path = client.download_file(row["remote_path"], download_dir)
+            status_update_started = monotonic()
             repository.mark_download_succeeded(
                 remote_file_id=row["id"],
                 local_staged_path=str(local_path),
+            )
+            status_update_seconds = monotonic() - status_update_started
+            total_seconds = monotonic() - download_started
+            logger.info(
+                "ftp_download_complete remote_file_id=%s remote_path=%s local_staged_path=%s duration_seconds=%.3f status_update_seconds=%.3f",
+                row["id"],
+                row["remote_path"],
+                local_path,
+                total_seconds,
+                status_update_seconds,
             )
             results.append(
                 {
@@ -73,9 +131,18 @@ def download_registry_files(
                 }
             )
         except Exception as exc:
+            status_update_started = monotonic()
             repository.mark_download_failed(
                 remote_file_id=row["id"],
                 error_message=str(exc),
+            )
+            logger.exception(
+                "ftp_download_failed remote_file_id=%s remote_path=%s duration_seconds=%.3f status_update_seconds=%.3f error=%s",
+                row["id"],
+                row["remote_path"],
+                monotonic() - download_started,
+                monotonic() - status_update_started,
+                exc,
             )
             results.append(
                 {
@@ -137,10 +204,12 @@ def ingest_registry_files(
         local_staged_path = row.get("local_staged_path")
         if not local_staged_path:
             error_message = "local_staged_path is missing for staged ingest."
+            status_update_started = monotonic()
             repository.mark_ingest_failed(
                 remote_file_id=row["id"],
                 error_message=error_message,
             )
+            _commit_repository_if_supported(repository)
             results.append(
                 {
                     "remote_file_id": row["id"],
@@ -152,16 +221,26 @@ def ingest_registry_files(
                         "error_message": error_message,
                     },
                 }
+            )
+            logger.info(
+                "ftp_ingest_failed remote_file_id=%s remote_path=%s duration_seconds=%.3f status_update_seconds=%.3f error=%s",
+                row["id"],
+                row["remote_path"],
+                0.0,
+                monotonic() - status_update_started,
+                error_message,
             )
             continue
 
         staged_path = Path(local_staged_path)
         if not staged_path.exists():
             error_message = f"staged file not found: {staged_path}"
+            status_update_started = monotonic()
             repository.mark_ingest_failed(
                 remote_file_id=row["id"],
                 error_message=error_message,
             )
+            _commit_repository_if_supported(repository)
             results.append(
                 {
                     "remote_file_id": row["id"],
@@ -174,19 +253,49 @@ def ingest_registry_files(
                     },
                 }
             )
+            logger.info(
+                "ftp_ingest_failed remote_file_id=%s remote_path=%s duration_seconds=%.3f status_update_seconds=%.3f error=%s",
+                row["id"],
+                row["remote_path"],
+                0.0,
+                monotonic() - status_update_started,
+                error_message,
+            )
             continue
 
         try:
+            ingest_started = monotonic()
             summary = pipeline.load_zip(
                 staged_path,
                 trigger_type=trigger_type,
                 source_type=source_type,
             )
+            status_update_started = monotonic()
             results.append(_map_ingest_summary(repository, row["id"], row["remote_path"], summary))
+            _commit_repository_if_supported(repository)
+            logger.info(
+                "ftp_ingest_complete remote_file_id=%s remote_path=%s pipeline_status=%s duration_seconds=%.3f status_update_seconds=%.3f rows_inserted=%s",
+                row["id"],
+                row["remote_path"],
+                summary.status,
+                monotonic() - ingest_started,
+                monotonic() - status_update_started,
+                summary.rows_inserted,
+            )
         except Exception as exc:
+            status_update_started = monotonic()
             repository.mark_ingest_failed(
                 remote_file_id=row["id"],
                 error_message=str(exc),
+            )
+            _commit_repository_if_supported(repository)
+            logger.exception(
+                "ftp_ingest_failed remote_file_id=%s remote_path=%s duration_seconds=%.3f status_update_seconds=%.3f error=%s",
+                row["id"],
+                row["remote_path"],
+                monotonic() - ingest_started,
+                monotonic() - status_update_started,
+                exc,
             )
             results.append(
                 {
@@ -306,7 +415,8 @@ def run_ftp_cycle(
     client,
     pipeline,
     source_name: str,
-    remote_directory: str,
+    remote_directory: str | None,
+    remote_directories: Sequence[str] | None = None,
     download_dir: Path,
     start: datetime | None,
     end: datetime | None,
@@ -317,6 +427,8 @@ def run_ftp_cycle(
     dry_run: bool = False,
     trigger_type: str,
     source_type: str,
+    event_callback: CycleEventCallback | None = None,
+    summary_callback: CycleSummaryCallback | None = None,
 ) -> dict[str, object]:
     started = monotonic()
     scan_result = scan_remote_files(
@@ -324,6 +436,7 @@ def run_ftp_cycle(
         client=client,
         source_name=source_name,
         remote_directory=remote_directory,
+        remote_directories=remote_directories,
         start=start,
         end=end,
         revision_policy=revision_policy,
@@ -332,6 +445,17 @@ def run_ftp_cycle(
     )
     candidates = scan_result["candidates"]
     candidate_by_path = {candidate.path: candidate for candidate in candidates}
+    _emit_cycle_event(
+        event_callback,
+        stage="discover",
+        level="info",
+        message="ftp discovery complete",
+        metrics={
+            "scanned": len(candidates),
+            "discovered": scan_result["summary"]["discovered"],
+            "updated": scan_result["summary"]["updated"],
+        },
+    )
 
     if dry_run:
         planned_downloads = repository.fetch_pending_downloads(
@@ -340,20 +464,29 @@ def run_ftp_cycle(
             remote_paths=list(candidate_by_path),
         )
         duration_seconds = round(monotonic() - started, 3)
+        dry_summary = {
+            "scanned": len(candidates),
+            "downloaded": 0,
+            "ingested": 0,
+            "skipped_duplicates": 0,
+            "failed_downloads": 0,
+            "failed_ingests": 0,
+            "reconciliation_needed": len(reconcile_registry_rows(repository=repository, limit=10000)),
+            "duration_seconds": duration_seconds,
+        }
+        _update_cycle_summary(summary_callback, dry_summary)
+        _emit_cycle_event(
+            event_callback,
+            stage="finalize",
+            level="info",
+            message="ftp dry run complete",
+            metrics=dry_summary | {"planned_downloads": len(planned_downloads)},
+        )
         return {
             "dry_run": True,
             "retry_failed": retry_failed,
             "families": list(families) if families is not None else None,
-            "summary": {
-                "scanned": len(candidates),
-                "downloaded": 0,
-                "ingested": 0,
-                "skipped_duplicates": 0,
-                "failed_downloads": 0,
-                "failed_ingests": 0,
-                "reconciliation_needed": len(reconcile_registry_rows(repository=repository, limit=10000)),
-                "duration_seconds": duration_seconds,
-            },
+            "summary": dry_summary,
             "stages": {
                 "scan": scan_result["summary"],
                 "planned_downloads": len(planned_downloads),
@@ -374,6 +507,27 @@ def run_ftp_cycle(
         for result in download_results
         if result["status"] == "DOWNLOADED"
     ]
+    _emit_cycle_event(
+        event_callback,
+        stage="download",
+        level="info",
+        message="ftp download stage complete",
+        metrics={
+            "downloaded": sum(1 for result in download_results if result["status"] == "DOWNLOADED"),
+            "failed_downloads": sum(1 for result in download_results if result["status"] == "FAILED_DOWNLOAD"),
+        },
+    )
+    _update_cycle_summary(
+        summary_callback,
+        {
+            "scanned": len(candidates),
+            "downloaded": sum(1 for result in download_results if result["status"] == "DOWNLOADED"),
+            "ingested": 0,
+            "skipped_duplicates": 0,
+            "failed_downloads": sum(1 for result in download_results if result["status"] == "FAILED_DOWNLOAD"),
+            "failed_ingests": 0,
+        },
+    )
     ingest_results = ingest_registry_files(
         repository=repository,
         pipeline=pipeline,
@@ -382,6 +536,17 @@ def run_ftp_cycle(
         trigger_type=trigger_type,
         source_type=source_type,
         remote_file_ids=downloaded_ids,
+    )
+    _emit_cycle_event(
+        event_callback,
+        stage="ingest",
+        level="info",
+        message="ftp ingest stage complete",
+        metrics={
+            "ingested": sum(1 for result in ingest_results if result["status"] == "INGESTED"),
+            "skipped_duplicates": sum(1 for result in ingest_results if result["status"] == "SKIPPED_DUPLICATE"),
+            "failed_ingests": sum(1 for result in ingest_results if result["status"] == "FAILED_INGEST"),
+        },
     )
 
     retry_download_payload: dict[str, object] | None = None
@@ -471,7 +636,32 @@ def run_ftp_cycle(
             "retry_ingest": retry_ingest_payload,
         },
     }
+    _update_cycle_summary(summary_callback, dict(payload["summary"]))
+    _emit_cycle_event(
+        event_callback,
+        stage="finalize",
+        level="info",
+        message="ftp cycle finalize complete",
+        metrics=dict(payload["summary"]),
+    )
     return payload
+
+
+def _emit_cycle_event(
+    callback: CycleEventCallback | None,
+    *,
+    stage: str,
+    level: str,
+    message: str,
+    metrics: dict[str, Any] | None,
+) -> None:
+    if callback is not None:
+        callback(stage, level, message, metrics)
+
+
+def _update_cycle_summary(callback: CycleSummaryCallback | None, summary: dict[str, Any]) -> None:
+    if callback is not None:
+        callback(summary)
 
 
 def run_locked_ftp_cycle(*, lock_path: Path, **kwargs) -> dict[str, object]:
@@ -485,7 +675,8 @@ def fetch_via_staged_flow(
     client,
     pipeline,
     source_name: str,
-    remote_directory: str,
+    remote_directory: str | None,
+    remote_directories: Sequence[str] | None = None,
     download_dir: Path,
     start: datetime | None,
     end: datetime | None,
@@ -499,6 +690,7 @@ def fetch_via_staged_flow(
         client=client,
         source_name=source_name,
         remote_directory=remote_directory,
+        remote_directories=remote_directories,
         start=start,
         end=end,
         revision_policy=revision_policy,

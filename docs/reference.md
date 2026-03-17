@@ -91,6 +91,36 @@ Current local verification status:
 - remaining unmapped rows are a small minority
 - topology-aware site/region operator paths are now meaningful locally
 
+## FTP Source Configuration
+
+Supported config:
+
+- `FTP_REMOTE_DIRECTORY`
+  - backward-compatible single-directory mode
+- `FTP_REMOTE_DIRECTORIES`
+  - explicit multi-directory mode
+  - comma-separated list of remote directories
+
+Example:
+
+```dotenv
+FTP_REMOTE_DIRECTORIES=/pm_archive/PM/sdr/ltefdd,/pm_archive/PM/itbbu/ltefdd,/pm_archive/PM/itbbu/itbbuplat
+```
+
+Behavior:
+
+- each configured remote directory is scanned explicitly
+- broad recursive FTP scanning is not used
+- new `ftp_remote_file` rows preserve:
+  - `remote_directory`
+  - full `remote_path`
+
+Current local-dev caveat:
+
+- older registry rows created before full remote-path identity may still use filename-only `remote_path` values
+- the new multi-directory path works correctly for newly discovered rows
+- for a fully clean local registry state, rebuild or clean the old registry rows once
+
 ## API Baseline
 
 Implemented API domains:
@@ -108,10 +138,25 @@ Important current guardrails:
 - if `entity-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
 - PRB and BLER `site-time` / `region-time` also require `dataset_family`
 - if PRB or BLER `site-time` / `region-time` dates are omitted, the backend defaults to the latest `collect_time` for that `dataset_family`
+- `site-time` / `region-time` KPI validation now also requires `dataset_family`
+- the Overview page no longer auto-loads validation queries; validation is on-demand from the Validation page
+- the Overview page also avoids auto-loading detailed site/region coverage aggregates; it uses a lightweight topology summary instead
+- detailed site/region coverage remains available from the Topology page as an explicit operator action
 - KPI Results UI uses date inputs and normalizes them to day bounds
 - KPI Results UI uses offset-based paging with `Rows`, `Previous`, and `Next`
 - operator-facing PRB and BLER `site-time` / `region-time` API routes use direct fast paths over narrowed raw facts plus topology enrichment instead of the heavier nested verified SQL views
 - topology snapshot Apply is intended only after reconciliation and is blocked when blocking issues are present
+- FTP scanning remains explicit and directory-configured; it does not switch to broad recursive crawling
+- FTP cycles now use persistent `ftp_cycle_run` and `ftp_cycle_run_event` records
+- long-running FTP cycles are executed by an in-process background worker; HTTP requests enqueue runs and return immediately
+- refreshing the UI does not cancel an active FTP cycle
+- on API startup, stale `running` FTP cycle rows from an interrupted prior process are marked `failed`
+- stale-run recovery preserves existing `summary_json` and sets:
+  - `finished_at`
+  - `error_message = "Run interrupted by process restart before completion"`
+- stale runs are not auto-requeued yet
+- startup recovery is schema-aware; if `ftp_cycle_run` tables have not been applied yet, the API skips recovery instead of crashing
+- Rust/Go remain deferred until profiling proves a real parsing or concurrency hotspot
 
 Current topology API additions:
 
@@ -125,6 +170,13 @@ Current topology API additions:
 - `POST /api/v1/topology/snapshots/{snapshot_id}/apply`
 - `POST /api/v1/topology/sync`
 
+Current operations API additions:
+
+- `POST /api/v1/operations/ftp-run-cycle`
+- `GET /api/v1/operations/ftp-runs`
+- `GET /api/v1/operations/ftp-runs/{run_id}`
+- `GET /api/v1/operations/ftp-runs/{run_id}/events`
+
 ## Operator UI Baseline
 
 Pages currently implemented:
@@ -136,6 +188,13 @@ Pages currently implemented:
 - Topology
 
 The UI is intentionally table- and form-based. It is not a charts-first analytics layer.
+
+Ingestion page additions now include:
+
+- persistent FTP run list
+- running vs recent FTP run visibility
+- stage/event inspection for the latest run
+- polling-based visibility that survives page refresh and navigation
 
 Topology page additions now include:
 

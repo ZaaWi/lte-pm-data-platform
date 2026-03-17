@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -56,6 +58,11 @@ from lte_pm_platform.pipeline.orchestration.vendor_indicator_semantics import (
     load_vendor_indicator_seed_file,
 )
 from lte_pm_platform.utils.paths import data_input_dir, ftp_cycle_lock_path, ftp_download_dir
+
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 app = typer.Typer(help="LTE PM CLI")
 ZIP_OPTION = typer.Option(..., exists=True, dir_okay=False, readable=True)
@@ -126,6 +133,10 @@ def get_ftp_client() -> FtpClient:
     settings = get_settings()
     if not settings.ftp_host:
         raise typer.BadParameter("FTP_HOST is not configured.")
+    if not settings.ftp_username:
+        raise typer.BadParameter("FTP_USERNAME is not configured.")
+    if not settings.ftp_password:
+        raise typer.BadParameter("FTP_PASSWORD is not configured.")
     return FtpClient(
         host=settings.ftp_host,
         port=settings.ftp_port,
@@ -134,6 +145,15 @@ def get_ftp_client() -> FtpClient:
         remote_directory=settings.ftp_remote_directory,
         passive_mode=settings.ftp_passive_mode,
     )
+
+
+def get_ftp_remote_directories() -> tuple[str, ...]:
+    settings = get_settings()
+    directories = getattr(settings, "ftp_remote_directories", ())
+    if directories:
+        return tuple(directories)
+    remote_directory = getattr(settings, "ftp_remote_directory", "/")
+    return (remote_directory,)
 
 
 @app.command("init-db")
@@ -792,13 +812,19 @@ def ftp_list(
     end: str | None = END_OPTION,
     revision_policy: str = REVISION_POLICY_OPTION,
 ) -> None:
+    settings = get_settings()
     client = get_ftp_client()
     window_start, window_end = parse_time_window(start, end)
-    parsed_candidates = client.list_candidate_details(
-        start=window_start,
-        end=window_end,
-        revision_policy=parse_revision_policy(revision_policy),
-    )
+    parsed_candidates = []
+    for remote_directory in get_ftp_remote_directories():
+        parsed_candidates.extend(
+            client.list_candidate_details(
+                remote_directory=remote_directory,
+                start=window_start,
+                end=window_end,
+                revision_policy=parse_revision_policy(revision_policy),
+            )
+        )
     typer.echo(
         json.dumps(
             {
@@ -834,6 +860,7 @@ def ftp_fetch(
             pipeline=pipeline,
             source_name=FTP_SOURCE_NAME,
             remote_directory=settings.ftp_remote_directory,
+            remote_directories=get_ftp_remote_directories(),
             download_dir=download_dir,
             start=window_start,
             end=window_end,
@@ -884,6 +911,7 @@ def ftp_run_cycle(
                 pipeline=pipeline,
                 source_name=FTP_SOURCE_NAME,
                 remote_directory=settings.ftp_remote_directory,
+                remote_directories=get_ftp_remote_directories(),
                 download_dir=download_dir,
                 start=window_start,
                 end=window_end,
@@ -913,11 +941,6 @@ def ftp_scan(
     settings = get_settings()
     client = get_ftp_client()
     window_start, window_end = parse_time_window(start, end)
-    candidates = client.list_candidate_details(
-        start=window_start,
-        end=window_end,
-        revision_policy=parse_revision_policy(revision_policy),
-    )
 
     with get_connection(settings) as connection:
         repository = FtpRemoteFileRepository(connection)
@@ -926,6 +949,7 @@ def ftp_scan(
             client=client,
             source_name=FTP_SOURCE_NAME,
             remote_directory=settings.ftp_remote_directory,
+            remote_directories=get_ftp_remote_directories(),
             start=window_start,
             end=window_end,
             revision_policy=parse_revision_policy(revision_policy),
