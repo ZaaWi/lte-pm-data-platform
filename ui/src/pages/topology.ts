@@ -131,6 +131,7 @@ export const page: PageModule = {
         </section>
         <section class="panel">
           <h3>Site coverage</h3>
+          <div class="actions"><button id="topology-load-coverage-btn" type="button">Load detailed coverage</button></div>
           <div id="site-coverage-table"></div>
         </section>
       </div>
@@ -153,7 +154,8 @@ export const page: PageModule = {
     const siteCoverage = container.querySelector<HTMLElement>('#site-coverage-table');
     const regionCoverage = container.querySelector<HTMLElement>('#region-coverage-table');
     const syncTopologyBtn = container.querySelector<HTMLButtonElement>('#topology-sync-btn');
-    if (!uploadForm || !uploadResult || !activeSnapshot || !snapshotSummary || !reconciliationSummary || !snapshotHistory || !detailsForm || !details || !actionResult || !unmapped || !siteCoverage || !regionCoverage || !syncTopologyBtn) {
+    const loadCoverageBtn = container.querySelector<HTMLButtonElement>('#topology-load-coverage-btn');
+    if (!uploadForm || !uploadResult || !activeSnapshot || !snapshotSummary || !reconciliationSummary || !snapshotHistory || !detailsForm || !details || !actionResult || !unmapped || !siteCoverage || !regionCoverage || !syncTopologyBtn || !loadCoverageBtn) {
       return;
     }
 
@@ -218,7 +220,11 @@ export const page: PageModule = {
     };
 
     const refresh = async () => {
-      await Promise.all([loadSnapshotIndex(), loadCoverage()]);
+      const unmappedEntities = await api.getUnmappedEntities(20);
+      unmapped.innerHTML = renderTable(unmappedEntities.rows);
+      siteCoverage.innerHTML = '<div class="status">Detailed site/region coverage is loaded on demand.</div>';
+      regionCoverage.innerHTML = '<div class="status">Detailed site/region coverage is loaded on demand.</div>';
+      await loadSnapshotIndex();
       if (selectedSnapshotId) {
         await loadSnapshotSummary(selectedSnapshotId);
       }
@@ -292,9 +298,21 @@ export const page: PageModule = {
       try {
         const response = await api.syncTopologyViaTopologyApi();
         actionResult.innerHTML = renderTable([response.result]);
-        await loadCoverage();
+        const unmappedEntities = await api.getUnmappedEntities(20);
+        unmapped.innerHTML = renderTable(unmappedEntities.rows);
       } catch (error) {
         setMessage(actionResult, `sync-topology failed: ${String(error)}`, 'error');
+      }
+    });
+
+    loadCoverageBtn.addEventListener('click', async () => {
+      setMessage(siteCoverage, 'Loading detailed site coverage…');
+      setMessage(regionCoverage, 'Loading detailed region coverage…');
+      try {
+        await loadCoverage();
+      } catch (error) {
+        setMessage(siteCoverage, `Loading site coverage failed: ${String(error)}`, 'error');
+        setMessage(regionCoverage, `Loading region coverage failed: ${String(error)}`, 'error');
       }
     });
 

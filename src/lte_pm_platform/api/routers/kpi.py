@@ -97,10 +97,15 @@ def kpi_results_region_time(
 @router.get("/kpi-validation/entity-time", response_model=RowsResponse)
 def kpi_validation_entity_time(
     family: KpiFamily,
+    dataset_family: str | None = None,
     connection: Connection = Depends(get_db_connection),
 ) -> RowsResponse:
     try:
-        rows = KpiService(connection).list_validation(family=family, grain="entity-time")
+        rows = KpiService(connection).list_validation_filtered(
+            family=family,
+            grain="entity-time",
+            dataset_family=dataset_family,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RowsResponse(count=len(rows), rows=rows)
@@ -109,10 +114,15 @@ def kpi_validation_entity_time(
 @router.get("/kpi-validation/site-time", response_model=RowsResponse)
 def kpi_validation_site_time(
     family: KpiFamily,
+    dataset_family: str | None = None,
     connection: Connection = Depends(get_db_connection),
 ) -> RowsResponse:
     try:
-        rows = KpiService(connection).list_validation(family=family, grain="site-time")
+        rows = KpiService(connection).list_validation_filtered(
+            family=family,
+            grain="site-time",
+            dataset_family=dataset_family,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RowsResponse(count=len(rows), rows=rows)
@@ -121,10 +131,15 @@ def kpi_validation_site_time(
 @router.get("/kpi-validation/region-time", response_model=RowsResponse)
 def kpi_validation_region_time(
     family: KpiFamily,
+    dataset_family: str | None = None,
     connection: Connection = Depends(get_db_connection),
 ) -> RowsResponse:
     try:
-        rows = KpiService(connection).list_validation(family=family, grain="region-time")
+        rows = KpiService(connection).list_validation_filtered(
+            family=family,
+            grain="region-time",
+            dataset_family=dataset_family,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RowsResponse(count=len(rows), rows=rows)

@@ -25,6 +25,7 @@ export const page: PageModule = {
                 <option value="region-time">region-time</option>
               </select>
             </label>
+            <label><div class="small">dataset_family</div><input name="dataset_family" placeholder="PM/sdr/ltefdd" value="PM/sdr/ltefdd" /></label>
           </div>
           <div class="actions"><button class="primary" type="submit">Load validation</button></div>
         </form>
@@ -43,9 +44,17 @@ export const page: PageModule = {
       const formData = new FormData(form);
       const family = String(formData.get('family')) as KpiFamily;
       const grain = String(formData.get('grain')) as KpiGrain;
+      const datasetFamily = String(formData.get('dataset_family') ?? '').trim();
+      if ((grain === 'site-time' || grain === 'region-time') && !datasetFamily) {
+        setMessage(table, 'dataset_family is required for site-time and region-time validation.', 'error');
+        return;
+      }
       setMessage(table, 'Loading validation…');
       try {
-        const response = await api.getKpiValidation(grain, { family });
+        const response = await api.getKpiValidation(grain, {
+          family,
+          dataset_family: datasetFamily || undefined
+        });
         table.innerHTML = renderTable(response.rows);
       } catch (error) {
         setMessage(table, `Validation load failed: ${String(error)}`, 'error');
@@ -56,7 +65,9 @@ export const page: PageModule = {
       event.preventDefault();
       await load();
     });
-
-    await load();
+    setMessage(
+      table,
+      'Validation is loaded on demand. Site-time and region-time validation require dataset_family to avoid broad analytical scans.'
+    );
   }
 };

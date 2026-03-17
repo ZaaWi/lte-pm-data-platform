@@ -43,6 +43,13 @@ def region_coverage(
     return RowsResponse(count=len(rows), rows=rows)
 
 
+@router.get("/summary")
+def topology_summary(
+    connection: Connection = Depends(get_db_connection),
+):  # noqa: ANN201
+    return {"summary": TopologyService(connection).summarize_topology_overview()}
+
+
 @router.post("/workbook-preview", response_model=SnapshotSummaryResponse)
 async def workbook_preview(
     file: UploadFile = File(...),

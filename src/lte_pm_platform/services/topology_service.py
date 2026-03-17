@@ -17,3 +17,6 @@ class TopologyService:
 
     def summarize_region_coverage(self, *, limit: int) -> list[dict]:
         return self.repository.summarize_region_coverage(limit=limit)
+
+    def summarize_topology_overview(self) -> dict:
+        return self.repository.summarize_topology_overview()

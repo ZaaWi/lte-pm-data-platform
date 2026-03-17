@@ -68,6 +68,7 @@ export const api = {
   getUnmappedEntities: (limit = 20) => request<RowsResponse>(`/topology/unmapped-entities${buildQuery({ limit })}`),
   getSiteCoverage: (limit = 20) => request<RowsResponse>(`/topology/site-coverage${buildQuery({ limit })}`),
   getRegionCoverage: (limit = 20) => request<RowsResponse>(`/topology/region-coverage${buildQuery({ limit })}`),
+  getTopologySummary: () => request<{ summary: Record<string, unknown> }>('/topology/summary'),
   uploadTopologyWorkbook: (file: File) => {
     const form = new FormData();
     form.append('file', file);

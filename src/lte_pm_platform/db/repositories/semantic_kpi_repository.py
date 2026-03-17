@@ -723,9 +723,10 @@ class SemanticKpiRepository:
         *,
         family: str,
         grain: str,
+        dataset_family: str | None = None,
     ) -> list[dict]:
         if grain == "entity-time" and family in {"prb", "bler"}:
-            return self._list_fast_entity_time_validation(family=family)
+            return self._list_fast_entity_time_validation(family=family, dataset_family=dataset_family)
 
         query_specs: dict[tuple[str, str], str] = {
             (
@@ -850,7 +851,18 @@ class SemanticKpiRepository:
                 ORDER BY dataset_family
             """,
         }
-        return self._fetch_rows(query_specs[(family, grain)])
+        query = query_specs[(family, grain)]
+        params: list[object] = []
+        if dataset_family is not None:
+            query = query.replace(
+                "\n                ORDER BY",
+                "\n                WHERE dataset_family = %s\n                ORDER BY",
+                1,
+            )
+            params.append(dataset_family)
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(query, tuple(params))
+            return list(cursor.fetchall())
 
     def _get_entity_time_validation_input_specs(self, *, kpi_codes: Sequence[str]) -> list[dict]:
         with self.connection.cursor(row_factory=dict_row) as cursor:
@@ -881,7 +893,12 @@ class SemanticKpiRepository:
             )
             return list(cursor.fetchall())
 
-    def _list_fast_entity_time_validation(self, *, family: str) -> list[dict]:
+    def _list_fast_entity_time_validation(
+        self,
+        *,
+        family: str,
+        dataset_family: str | None = None,
+    ) -> list[dict]:
         family_kpi_codes: dict[str, tuple[str, ...]] = {
             "prb": ("dl_prb_utilization", "ul_prb_utilization"),
             "bler": ("dl_bler", "ul_bler"),
@@ -900,6 +917,8 @@ class SemanticKpiRepository:
 
         grouped_specs: dict[str, list[dict]] = {}
         for row in input_specs:
+            if dataset_family is not None and row["dataset_family"] != dataset_family:
+                continue
             grouped_specs.setdefault(row["dataset_family"], []).append(row)
 
         rows: list[dict] = []

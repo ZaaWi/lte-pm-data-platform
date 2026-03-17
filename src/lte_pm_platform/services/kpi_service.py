@@ -46,9 +46,24 @@ class KpiService:
         )
 
     def list_validation(self, *, family: str, grain: str) -> list[dict]:
+        return self.list_validation_filtered(family=family, grain=grain, dataset_family=None)
+
+    def list_validation_filtered(
+        self,
+        *,
+        family: str,
+        grain: str,
+        dataset_family: str | None,
+    ) -> list[dict]:
         self._validate_family(family)
         self._validate_grain(grain)
-        return self.repository.list_verified_kpi_validation(family=family, grain=grain)
+        if grain in {"site-time", "region-time"} and not dataset_family:
+            raise ValueError("dataset_family is required for site-time and region-time KPI validation")
+        return self.repository.list_verified_kpi_validation(
+            family=family,
+            grain=grain,
+            dataset_family=dataset_family,
+        )
 
     @staticmethod
     def _validate_family(family: str) -> None:

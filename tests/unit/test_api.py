@@ -341,11 +341,11 @@ def test_kpi_results_region_time(monkeypatch) -> None:  # noqa: ANN001
 def test_kpi_validation_entity_time(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         KpiService,
-        "list_validation",
+        "list_validation_filtered",
         lambda self, **kwargs: [{"dataset_family": "PM/sdr/ltefdd", "entity_time_rows": 10}],
     )
 
-    response = kpi_validation_entity_time(family="rrc", connection=FakeConnection())
+    response = kpi_validation_entity_time(family="rrc", dataset_family=None, connection=FakeConnection())
 
     assert response.rows[0]["entity_time_rows"] == 10
 
@@ -353,11 +353,11 @@ def test_kpi_validation_entity_time(monkeypatch) -> None:  # noqa: ANN001
 def test_kpi_validation_site_time(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         KpiService,
-        "list_validation",
+        "list_validation_filtered",
         lambda self, **kwargs: [{"dataset_family": "PM/sdr/ltefdd", "site_time_rows": 8}],
     )
 
-    response = kpi_validation_site_time(family="prb", connection=FakeConnection())
+    response = kpi_validation_site_time(family="prb", dataset_family="PM/sdr/ltefdd", connection=FakeConnection())
 
     assert response.rows[0]["site_time_rows"] == 8
 

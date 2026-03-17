@@ -469,6 +469,23 @@ class TopologyReferenceRepository:
             )
             return list(cursor.fetchall())
 
+    def summarize_topology_overview(self) -> dict:
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_entities,
+                    COUNT(*) FILTER (WHERE site_code IS NOT NULL) AS mapped_entities_with_site,
+                    COUNT(*) FILTER (WHERE region_code IS NOT NULL) AS mapped_entities_with_region,
+                    COUNT(*) FILTER (WHERE mapping_status = 'UNMAPPED') AS unmapped_entities,
+                    COUNT(DISTINCT site_code) FILTER (WHERE site_code IS NOT NULL) AS distinct_sites,
+                    COUNT(DISTINCT region_code) FILTER (WHERE region_code IS NOT NULL) AS distinct_regions
+                FROM ref_lte_entity_topology_enrichment
+                """
+            )
+            row = cursor.fetchone()
+        return dict(row or {})
+
     def run_snapshot_reconciliation(self, snapshot_id: int) -> dict:
         active_snapshot = self.get_active_snapshot()
         active_snapshot_id = active_snapshot["snapshot_id"] if active_snapshot else None

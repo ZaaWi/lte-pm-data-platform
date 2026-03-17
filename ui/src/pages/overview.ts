@@ -28,15 +28,10 @@ export const page: PageModule = {
     if (!cards || !failures || !topology || !coverage || !validation) return;
 
     try {
-      const [ingestionStatus, unmapped, siteCoverage, regionCoverage, prbValidation, blerValidation, rrcValidation] =
+      const [ingestionStatus, topologySummary] =
         await Promise.all([
           api.getIngestionStatus(5),
-          api.getUnmappedEntities(5),
-          api.getSiteCoverage(5),
-          api.getRegionCoverage(5),
-          api.getKpiValidation('site-time', { family: 'prb' }),
-          api.getKpiValidation('site-time', { family: 'bler' }),
-          api.getKpiValidation('entity-time', { family: 'rrc' })
+          api.getTopologySummary()
         ]);
 
       const summary = ingestionStatus.summary;
@@ -54,18 +49,13 @@ export const page: PageModule = {
 
       failures.innerHTML = renderTable(ingestionStatus.recent_failures.slice(0, 5));
       topology.innerHTML = renderKeyValue({
-        unmapped_entities_sample: unmapped.count,
+        ...topologySummary.summary,
         latest_scan_at: ingestionStatus.latest_scan_at ?? 'n/a'
       });
-      coverage.innerHTML = renderTable([
-        ...(siteCoverage.rows.slice(0, 3) as Array<Record<string, unknown>>),
-        ...(regionCoverage.rows.slice(0, 2) as Array<Record<string, unknown>>)
-      ]);
-      validation.innerHTML = renderTable([
-        ...(prbValidation.rows as Array<Record<string, unknown>>),
-        ...(blerValidation.rows as Array<Record<string, unknown>>),
-        ...(rrcValidation.rows as Array<Record<string, unknown>>)
-      ]);
+      coverage.innerHTML =
+        '<div class="status">Detailed site/region coverage is loaded on demand from the Topology page.</div>';
+      validation.innerHTML =
+        '<div class="status">Validation is now on-demand. Open the Validation page and load a specific family/grain with the narrowest practical dataset_family filter.</div>';
     } catch (error) {
       setMessage(container, `Overview load failed: ${String(error)}`, 'error');
     }
