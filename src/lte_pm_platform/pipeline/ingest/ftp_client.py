@@ -41,8 +41,8 @@ class FtpClient:
         self.ftp_factory = ftp_factory
 
     @contextmanager
-    def session(self) -> Iterator[FTP]:
-        ftp = self.connect()
+    def session(self, *, remote_directory: str | None = None) -> Iterator[FTP]:
+        ftp = self.connect(remote_directory=remote_directory)
         try:
             yield ftp
         finally:
@@ -51,16 +51,16 @@ class FtpClient:
             except Exception:
                 ftp.close()
 
-    def connect(self) -> FTP:
+    def connect(self, *, remote_directory: str | None = None) -> FTP:
         ftp = self.ftp_factory()
         ftp.connect(self.host, self.port)
         ftp.login(user=self.username, passwd=self.password)
         ftp.set_pasv(self.passive_mode)
-        ftp.cwd(self.remote_directory)
+        ftp.cwd(remote_directory or self.remote_directory)
         return ftp
 
-    def list_files(self) -> list[str]:
-        with self.session() as ftp:
+    def list_files(self, *, remote_directory: str | None = None) -> list[str]:
+        with self.session(remote_directory=remote_directory) as ftp:
             return sorted(ftp.nlst())
 
     def list_candidate_files(
@@ -82,11 +82,13 @@ class FtpClient:
     def list_candidate_details(
         self,
         *,
+        remote_directory: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
         revision_policy: RevisionPolicy = "additive",
     ) -> list[ParsedArchiveFile]:
-        with self.session() as ftp:
+        effective_remote_directory = remote_directory or self.remote_directory
+        with self.session(remote_directory=effective_remote_directory) as ftp:
             filenames = sorted(ftp.nlst())
             parsed_candidates = select_parsed_files(
                 filenames,
@@ -104,16 +106,18 @@ class FtpClient:
                         interval_start=candidate.interval_start,
                         revision=candidate.revision,
                         extension=candidate.extension,
-                        path=candidate.path,
+                        path=str(Path(effective_remote_directory) / candidate.filename),
                         remote_size_bytes=metadata["remote_size_bytes"],
                         remote_modified_at=metadata["remote_modified_at"],
                     )
                 )
             return candidates_with_metadata
 
-    def download_file(self, remote_filename: str, local_dir: Path) -> Path:
+    def download_file(self, remote_path: str, local_dir: Path) -> Path:
         local_dir.mkdir(parents=True, exist_ok=True)
-        local_path = local_dir / Path(remote_filename).name
+        remote_directory = str(Path(remote_path).parent)
+        remote_filename = Path(remote_path).name
+        local_path = local_dir / remote_filename
         fd, temp_name = tempfile.mkstemp(
             prefix=f"{local_path.stem}_",
             suffix=".part",
@@ -122,7 +126,7 @@ class FtpClient:
         os.close(fd)
         temp_path = Path(temp_name)
         try:
-            with self.session() as ftp, temp_path.open("wb") as local_handle:
+            with self.session(remote_directory=remote_directory) as ftp, temp_path.open("wb") as local_handle:
                 ftp.retrbinary(f"RETR {remote_filename}", local_handle.write)
             temp_path.replace(local_path)
         except Exception:

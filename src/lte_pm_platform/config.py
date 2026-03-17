@@ -13,6 +13,15 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_list(name: str) -> tuple[str, ...]:
+    value = os.getenv(name, "")
+    if not value.strip():
+        return ()
+    normalized = value.replace("\n", ",")
+    items = [item.strip() for item in normalized.split(",")]
+    return tuple(item for item in items if item)
+
+
 @dataclass(frozen=True)
 class Settings:
     postgres_db: str
@@ -25,6 +34,7 @@ class Settings:
     ftp_username: str
     ftp_password: str
     ftp_remote_directory: str
+    ftp_remote_directories: tuple[str, ...]
     ftp_passive_mode: bool
 
     @property
@@ -39,6 +49,10 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    ftp_remote_directories = _env_list("FTP_REMOTE_DIRECTORIES")
+    ftp_remote_directory = os.getenv("FTP_REMOTE_DIRECTORY", "/")
+    if not ftp_remote_directories and ftp_remote_directory:
+        ftp_remote_directories = (ftp_remote_directory,)
     return Settings(
         postgres_db=os.getenv("POSTGRES_DB", "lte_pm"),
         postgres_user=os.getenv("POSTGRES_USER", "lte_pm"),
@@ -49,6 +63,7 @@ def get_settings() -> Settings:
         ftp_port=int(os.getenv("FTP_PORT", "21")),
         ftp_username=os.getenv("FTP_USERNAME", ""),
         ftp_password=os.getenv("FTP_PASSWORD", ""),
-        ftp_remote_directory=os.getenv("FTP_REMOTE_DIRECTORY", "/"),
+        ftp_remote_directory=ftp_remote_directory,
+        ftp_remote_directories=ftp_remote_directories,
         ftp_passive_mode=_env_bool("FTP_PASSIVE_MODE", True),
     )

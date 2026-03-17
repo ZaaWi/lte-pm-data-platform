@@ -10,6 +10,7 @@ from lte_pm_platform.pipeline.orchestration.ftp_staged_flow import (
     fetch_via_staged_flow,
     run_ftp_cycle,
     run_locked_ftp_cycle,
+    scan_remote_files,
     retry_download_registry_files,
     retry_ingest_registry_files,
 )
@@ -171,8 +172,10 @@ class FakeRepository:
 class FakeClient:
     def __init__(self, candidate: ParsedArchiveFile) -> None:
         self.candidate = candidate
+        self.calls: list[dict] = []
 
     def list_candidate_details(self, **kwargs) -> list[ParsedArchiveFile]:  # noqa: ANN003
+        self.calls.append(kwargs)
         return [self.candidate]
 
     def download_file(self, remote_path: str, download_dir: Path) -> Path:
@@ -252,6 +255,38 @@ def test_fetch_via_staged_flow_ingests_only_rows_downloaded_in_same_call(tmp_pat
     assert pipeline.calls == [
         {"zip_path": str(staged), "trigger_type": "ftp_fetch", "source_type": "ftp"}
     ]
+
+
+def test_scan_remote_files_scans_each_configured_directory() -> None:
+    candidate = ParsedArchiveFile(
+        dataset_family="PM/sdr/ltefdd",
+        filename="file1.tar.gz",
+        interval_start=datetime(2026, 3, 13, 10, 15),
+        revision=0,
+        extension="tar.gz",
+        path="/unused/file1.tar.gz",
+    )
+    repository = FakeRepository(pending_ingests=[])
+    client = FakeClient(candidate)
+
+    result = scan_remote_files(
+        repository=repository,
+        client=client,
+        source_name="default",
+        remote_directory=None,
+        remote_directories=["/pm/a", "/pm/b"],
+        start=None,
+        end=None,
+        revision_policy="additive",
+        persist=True,
+    )
+
+    assert client.calls == [
+        {"remote_directory": "/pm/a", "start": None, "end": None, "revision_policy": "additive"},
+        {"remote_directory": "/pm/b", "start": None, "end": None, "revision_policy": "additive"},
+    ]
+    assert [call["remote_directory"] for call in repository.upsert_calls] == ["/pm/a", "/pm/b"]
+    assert result["summary"] == {"discovered": 2, "updated": 0}
 
 
 def test_retry_download_registry_files_scopes_to_requested_failed_rows(tmp_path) -> None:  # noqa: ANN001
