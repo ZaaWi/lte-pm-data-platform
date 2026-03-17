@@ -1,10 +1,10 @@
 # lte_pm_platform
 
-LTE PM Platform is a local developer stack for ingesting LTE PM archives into PostgreSQL and checking results through an API and a small UI.
+LTE PM Platform is a local developer stack for ingesting LTE PM archives into PostgreSQL and reviewing results through a small API and UI.
 
 ## Architecture
 
-The system ingests PM archives, stores them in PostgreSQL, enriches them with entity and topology data, and exposes results through CLI, API, and UI.
+The system ingests PM archives, stores raw records in PostgreSQL, enriches them with entity and topology data, and exposes results through CLI, API, and UI.
 
 ```mermaid
 flowchart LR
@@ -21,7 +21,9 @@ flowchart LR
     K --> L[CLI / API / UI]
 ```
 
-Setup
+## Setup
+
+```bash
 docker compose up -d postgres
 
 python -m venv .venv
@@ -31,59 +33,67 @@ pip install -e .[dev]
 cp .env.example .env
 
 python -m lte_pm_platform.cli init-db
-Run
+```
+
+## Run
 
 Start the API:
 
+```bash
 ./.venv/bin/python -m uvicorn lte_pm_platform.api.app:app --host 127.0.0.1 --port 8000
+```
 
 Start the UI:
 
+```bash
 cd ui
 npm install
 npm run dev -- --host 127.0.0.1
+```
 
 Open:
 
-API: http://127.0.0.1:8000/api/v1/health
+- API: `http://127.0.0.1:8000/api/v1/health`
+- UI: `http://127.0.0.1:5173`
 
-UI: http://127.0.0.1:5173
+## Quick verification
 
-Quick verification
+```bash
 curl -sS http://127.0.0.1:8000/api/v1/health
 curl -sS http://127.0.0.1:8000/api/v1/ready
+```
 
-Open the UI and check that pages load correctly.
+Then open the UI and confirm the main pages load correctly.
 
-KPI usage
+## KPI usage
 
-Use the KPI Results page or API to explore data by family, aggregation level, and dataset.
+Use the `KPI Results` page or the API to review data by family, aggregation level, and dataset.
 
 Example:
 
+```bash
 curl -sS 'http://127.0.0.1:8000/api/v1/kpi-results/entity-time?family=prb&dataset_family=PM/sdr/ltefdd&limit=20'
-Topology workflow
+```
 
-Use the Topology page to:
+## Topology workflow
 
-Upload workbook
+Use the `Topology` page to:
 
-Preview snapshot
-
-Run reconciliation
-
-Review issues
-
-Apply snapshot
-
-Run sync-topology
+1. Upload a workbook
+2. Preview the snapshot
+3. Run reconciliation
+4. Review issues
+5. Apply the snapshot
+6. Run `sync-topology`
 
 CLI example:
 
+```bash
 python -m lte_pm_platform.cli load-topology-regions --csv data/reference/regions.csv
 python -m lte_pm_platform.cli sync-topology
-Notes
+```
 
-FTP sources can be configured with FTP_REMOTE_DIRECTORY or FTP_REMOTE_DIRECTORIES
+## Notes
 
-See docs/reference.md for more details
+- FTP sources can be configured with `FTP_REMOTE_DIRECTORY` or `FTP_REMOTE_DIRECTORIES`.
+- See [docs/reference.md](/home/mhmd/local/repo/myprojects/lte_pm_platform/docs/reference.md) for more details.
