@@ -19,6 +19,8 @@ flowchart LR
     I --> J[(ref_lte_entity_topology_enrichment)]
     F --> K[KPI queries]
     K --> L[CLI / API / UI]
+```
+
 Setup
 docker compose up -d postgres
 
