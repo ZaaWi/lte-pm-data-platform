@@ -65,6 +65,12 @@ curl -sS http://127.0.0.1:8000/api/v1/ready
 
 Then open the UI and confirm the main pages load correctly.
 
+On the `Ingestion` page you can now:
+
+- review discovered 15-minute source intervals from the FTP registry
+- trigger a run for one selected interval
+- keep using the existing range-based run form for broader manual runs
+
 ## KPI usage
 
 Use the `KPI Results` page or the API to review data by family, aggregation level, and dataset.
@@ -96,4 +102,5 @@ python -m lte_pm_platform.cli sync-topology
 ## Notes
 
 - FTP sources can be configured with `FTP_REMOTE_DIRECTORY` or `FTP_REMOTE_DIRECTORIES`.
-- See [docs/reference.md](/home/mhmd/local/repo/myprojects/lte_pm_platform/docs/reference.md) for more details.
+- interval-triggered ingestion uses the existing FTP run queue and enforces 15-minute `interval_start` alignment
+- See [docs/reference.md](https://github.com/ZaaWi/lte-pm-data-platform/blob/main/docs/reference.md) for more details.

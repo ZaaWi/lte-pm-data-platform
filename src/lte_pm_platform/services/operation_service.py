@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any, Callable
 
 from psycopg import Connection
@@ -38,6 +38,7 @@ class OperationValidationError(ValueError):
 
 @dataclass(frozen=True)
 class ParsedTimeWindow:
+    interval_start: datetime | None
     start: datetime | None
     end: datetime | None
 
@@ -51,6 +52,7 @@ class OperationService:
         self,
         *,
         limit: int,
+        interval_start: datetime | None,
         start: date | datetime | None,
         end: date | datetime | None,
         revision_policy: str,
@@ -59,7 +61,7 @@ class OperationService:
         retry_failed: bool,
     ) -> dict[str, object]:
         self._validate_families(families)
-        window = self._normalize_time_window(start=start, end=end)
+        window = self._normalize_time_window(interval_start=interval_start, start=start, end=end)
         repository = FtpRemoteFileRepository(self.connection)
         pipeline = self._build_pipeline()
         client = self._build_ftp_client()
@@ -94,6 +96,7 @@ class OperationService:
         self,
         *,
         limit: int,
+        interval_start: datetime | None,
         start: date | datetime | None,
         end: date | datetime | None,
         revision_policy: str,
@@ -104,10 +107,11 @@ class OperationService:
     ) -> dict[str, Any]:
         self._validate_families(families)
         self._parse_revision_policy(revision_policy)
-        window = self._normalize_time_window(start=start, end=end)
+        window = self._normalize_time_window(interval_start=interval_start, start=start, end=end)
         repository = FtpCycleRunRepository(self.connection)
         parameters = {
             "limit": limit,
+            "interval_start": window.interval_start.isoformat() if window.interval_start is not None else None,
             "start": window.start.isoformat() if window.start is not None else None,
             "end": window.end.isoformat() if window.end is not None else None,
             "revision_policy": revision_policy,
@@ -141,6 +145,7 @@ class OperationService:
 
         parameters = dict(run.get("parameters_json") or {})
         limit = int(parameters.get("limit") or 20)
+        interval_start = self._parse_iso_datetime(parameters.get("interval_start"))
         start = self._parse_iso_datetime(parameters.get("start"))
         end = self._parse_iso_datetime(parameters.get("end"))
         revision_policy = str(parameters.get("revision_policy") or "additive")
@@ -157,6 +162,7 @@ class OperationService:
             "ftp cycle run started",
             {
                 "limit": limit,
+                "interval_start": interval_start.isoformat() if interval_start is not None else None,
                 "dry_run": dry_run,
                 "retry_failed": retry_failed,
                 "families": families,
@@ -367,12 +373,22 @@ class OperationService:
     @staticmethod
     def _normalize_time_window(
         *,
+        interval_start: datetime | None,
         start: date | datetime | None,
         end: date | datetime | None,
     ) -> ParsedTimeWindow:
+        if interval_start is not None:
+            normalized_interval_start = OperationService._normalize_boundary(interval_start, end_of_day=False)
+            if normalized_interval_start is None:
+                raise OperationValidationError("interval_start must not be empty")
+            return ParsedTimeWindow(
+                interval_start=normalized_interval_start,
+                start=normalized_interval_start,
+                end=normalized_interval_start + timedelta(minutes=15),
+            )
         normalized_start = OperationService._normalize_boundary(start, end_of_day=False)
         normalized_end = OperationService._normalize_boundary(end, end_of_day=True)
-        return ParsedTimeWindow(start=normalized_start, end=normalized_end)
+        return ParsedTimeWindow(interval_start=None, start=normalized_start, end=normalized_end)
 
     @staticmethod
     def _normalize_boundary(value: date | datetime | None, *, end_of_day: bool) -> datetime | None:

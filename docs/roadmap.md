@@ -146,6 +146,11 @@ Not included in the first system version:
 - workbook-driven topology snapshot, reconciliation, and guarded activation baseline through the API/UI
 - backward-compatible multi-directory FTP source support for explicit PM directory scanning
 - persistent FTP cycle run tracking with background execution and operator-visible run state
+- read-only source-interval discovery over the existing FTP registry (`ftp_remote_file`)
+- operator-facing Source intervals panel on the Ingestion page
+- interval-triggered FTP execution for one selected 15-minute source interval using `interval_start`
+- normalization of `interval_start` into the existing 15-minute `start` / `end` execution window
+- operator UI integration for interval-triggered runs on top of the existing Ingestion page
 
 ### Partially Implemented
 
@@ -193,13 +198,16 @@ Implemented baseline:
 - FTP cycles are now enqueued from the API and executed in a background worker
 - UI refresh/navigation no longer implies loss of run visibility
 - API startup now reconciles stale prior-process `running` rows by marking them `failed` with a restart-interruption error
+- the Ingestion page now exposes discovered source intervals from the FTP registry as a read-only operator view
+- operators can now trigger a run for one selected discovered 15-minute interval while continuing to use `ftp_cycle_run` and `ftp_cycle_run_event` for execution state
+- interval-triggered runs store `interval_start` explicitly in `parameters_json`
+- interval-based ingestion aligns the operator workflow with the native PM cadence of 15-minute source intervals
+- the existing day-range and backfill run capability remains available for manual broader runs
 
 ### Planned
 
 - data quality framework
-- automated scheduling after manual UI/API operational flows are stable
 - monitoring / alerting hooks
-- broader verified KPI family rollout beyond the current PRB, BLER, and direct-mapped RRC stack
 - broader site/time and region/time optimization outside the current PRB/BLER operator fast paths
 
 ## 5. Ingestion Lifecycle
@@ -207,6 +215,10 @@ Implemented baseline:
 Primary operational path:
 
 `FTP discovery -> registry tracking -> staged download -> staged ingest -> audit recording -> lifecycle archive or reject`
+
+Current operator visibility layer:
+
+`registry-backed source interval discovery -> operator review in the Ingestion UI -> interval-triggered execution or existing range/backfill controls`
 
 Convenience path:
 
@@ -241,6 +253,24 @@ Success condition:
 - site/time and region/time operator paths remain meaningfully populated in local verification
 - the CM/reference-data strategy for authoritative topology mapping is clear enough to support the next stabilization step
 - persistent FTP run visibility remains stable while ingestion work moves off the request lifecycle
+- the read-only source-interval layer remains aligned with the existing staged FTP flow and manual operator control
+
+### Near-term ingestion operator enhancement
+
+Target additions:
+
+- improve partial interval awareness in the operator UI without implying completeness too early
+- add clearer interval-level summaries around families present, statuses present, and revision visibility
+- keep execution state in the existing persistent FTP run and event model
+- retain the current day-range and backfill flow for manual broader runs
+
+Success condition:
+
+- operators can review discovered source intervals before selecting work
+- interval-triggered runs continue to fit cleanly into the existing staged FTP flow
+- interval rows provide clearer factual summaries for operator decision-making
+- run details continue to be exposed through the current persistent run/event UI and API
+- broader range/backfill execution remains available and unchanged
 
 ### Near-term milestone after topology reference-data completion
 

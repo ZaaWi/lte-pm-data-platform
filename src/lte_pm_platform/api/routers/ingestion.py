@@ -43,3 +43,12 @@ def ingestion_reconciliation_preview(
 ) -> RowsResponse:
     rows = IngestionService(connection).get_reconciliation_preview(limit=limit)
     return RowsResponse(count=len(rows), rows=rows)
+
+
+@router.get("/source-intervals", response_model=RowsResponse)
+def ingestion_source_intervals(
+    limit: int = 50,
+    connection: Connection = Depends(get_db_connection),
+) -> RowsResponse:
+    rows = IngestionService(connection).list_source_intervals(limit=limit)
+    return RowsResponse(count=len(rows), rows=rows)

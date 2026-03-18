@@ -119,6 +119,31 @@ class FtpRemoteFileRepository:
             )
             return list(cursor.fetchall())
 
+    def summarize_source_intervals(self, *, limit: int = 50) -> list[dict]:
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    interval_start,
+                    COUNT(*) AS total_files,
+                    ARRAY_AGG(DISTINCT dataset_family ORDER BY dataset_family)
+                        FILTER (WHERE dataset_family IS NOT NULL) AS families_present,
+                    COUNT(DISTINCT dataset_family) AS family_count,
+                    ARRAY_AGG(DISTINCT status ORDER BY status)
+                        FILTER (WHERE status IS NOT NULL) AS statuses_present,
+                    MAX(revision) AS max_revision,
+                    MAX(last_seen_at) AS last_seen_at,
+                    MAX(last_scan_at) AS last_scan_at
+                FROM ftp_remote_file
+                WHERE interval_start IS NOT NULL
+                GROUP BY interval_start
+                ORDER BY interval_start DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            return list(cursor.fetchall())
+
     def fetch_remote_file_by_id(self, *, remote_file_id: int) -> dict | None:
         rows = self.fetch_registry_rows(remote_file_ids=[remote_file_id], limit=1)
         return rows[0] if rows else None

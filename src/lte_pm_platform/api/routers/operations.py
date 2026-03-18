@@ -31,6 +31,7 @@ def ftp_run_cycle(
     try:
         run = service.enqueue_ftp_cycle(
             limit=payload.limit,
+            interval_start=payload.interval_start,
             start=payload.start,
             end=payload.end,
             revision_policy=payload.revision_policy,

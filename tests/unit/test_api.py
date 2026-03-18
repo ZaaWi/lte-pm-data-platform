@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import importlib
+from datetime import datetime
 
 import pytest
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 
 from lte_pm_platform.api.app import LOCAL_DEV_CORS_ORIGINS, STALE_RUN_ERROR_MESSAGE, create_app, recover_stale_ftp_cycle_runs
 from lte_pm_platform.api.routers.ingestion import (
     ingestion_failure_detail,
     ingestion_failures,
     ingestion_reconciliation_preview,
+    ingestion_source_intervals,
     ingestion_status,
 )
 from lte_pm_platform.api.routers.kpi import (
@@ -93,6 +96,7 @@ def test_create_app_registers_expected_routes() -> None:
     assert "/api/v1/health" in paths
     assert "/api/v1/ready" in paths
     assert "/api/v1/ingestion/status" in paths
+    assert "/api/v1/ingestion/source-intervals" in paths
     assert "/api/v1/topology/site-coverage" in paths
     assert "/api/v1/topology/workbook-preview" in paths
     assert "/api/v1/topology/snapshots" in paths
@@ -244,6 +248,31 @@ def test_reconciliation_preview(monkeypatch) -> None:  # noqa: ANN001
     response = ingestion_reconciliation_preview(limit=10, connection=FakeConnection())
 
     assert response.rows[0]["classification"] == "reconciliation_needed"
+
+
+def test_ingestion_source_intervals(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        IngestionService,
+        "list_source_intervals",
+        lambda self, limit: [
+            {
+                "interval_start": "2026-03-05T00:15:00",
+                "total_files": 3,
+                "families_present": ["PM/itbbu/ltefdd", "PM/sdr/ltefdd"],
+                "family_count": 2,
+                "statuses_present": ["DISCOVERED", "INGESTED"],
+                "max_revision": 1,
+                "last_seen_at": "2026-03-18T10:12:30",
+                "last_scan_at": "2026-03-18T10:12:30",
+            }
+        ],
+    )
+
+    response = ingestion_source_intervals(limit=25, connection=FakeConnection())
+
+    assert response.count == 1
+    assert response.rows[0]["interval_start"] == "2026-03-05T00:15:00"
+    assert response.rows[0]["family_count"] == 2
 
 
 def test_unmapped_entities(monkeypatch) -> None:  # noqa: ANN001
@@ -475,14 +504,20 @@ def test_kpi_validation_site_time_requires_dataset_family(monkeypatch) -> None: 
 
 
 def test_ftp_run_cycle_route(monkeypatch) -> None:  # noqa: ANN001
+    captured: dict[str, object] = {}
+
+    def fake_enqueue(self, **kwargs):  # noqa: ANN001, ANN202
+        captured.update(kwargs)
+        return {"id": 12, "requested_at": "2026-03-16T12:00:00", "status": "queued"}
+
     monkeypatch.setattr(
         OperationService,
         "enqueue_ftp_cycle",
-        lambda self, **kwargs: {"id": 12, "requested_at": "2026-03-16T12:00:00", "status": "queued"},
+        fake_enqueue,
     )
 
     response = ftp_run_cycle(
-        payload=FtpRunCycleRequest(),
+        payload=FtpRunCycleRequest(interval_start=datetime(2026, 3, 5, 0, 15)),
         connection=FakeConnection(),
         settings=make_settings(),
     )
@@ -490,6 +525,7 @@ def test_ftp_run_cycle_route(monkeypatch) -> None:  # noqa: ANN001
     assert response.operation == "ftp_run_cycle"
     assert response.run_id == 12
     assert response.status == "QUEUED"
+    assert captured["interval_start"] == datetime(2026, 3, 5, 0, 15)
 
 
 def test_ftp_run_cycle_route_validation_error(monkeypatch) -> None:  # noqa: ANN001
@@ -507,6 +543,11 @@ def test_ftp_run_cycle_route_validation_error(monkeypatch) -> None:  # noqa: ANN
             )
 
     assert exc_info.value.status_code == 400
+
+
+def test_ftp_run_cycle_request_rejects_invalid_interval_start() -> None:
+    with pytest.raises(ValidationError, match="interval_start must align to a 15-minute boundary"):
+        FtpRunCycleRequest(interval_start=datetime(2026, 3, 5, 0, 7))
 
 
 def test_list_ftp_runs_route(monkeypatch) -> None:  # noqa: ANN001

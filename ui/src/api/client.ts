@@ -84,6 +84,8 @@ export const api = {
   getFailureDetail: (id: number) => request<{ row: Record<string, unknown> | null }>(`/ingestion/failures/${id}`),
   getReconciliationPreview: (limit = 20) =>
     request<RowsResponse>(`/ingestion/reconciliation-preview${buildQuery({ limit })}`),
+  getSourceIntervals: (limit = 50) =>
+    request<RowsResponse>(`/ingestion/source-intervals${buildQuery({ limit })}`),
   getUnmappedEntities: (limit = 20) => request<RowsResponse>(`/topology/unmapped-entities${buildQuery({ limit })}`),
   getSiteCoverage: (limit = 20) => request<RowsResponse>(`/topology/site-coverage${buildQuery({ limit })}`),
   getRegionCoverage: (limit = 20) => request<RowsResponse>(`/topology/region-coverage${buildQuery({ limit })}`),

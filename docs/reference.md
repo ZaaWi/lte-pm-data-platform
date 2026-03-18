@@ -150,6 +150,10 @@ Important current guardrails:
 - FTP cycles now use persistent `ftp_cycle_run` and `ftp_cycle_run_event` records
 - long-running FTP cycles are executed by an in-process background worker; HTTP requests enqueue runs and return immediately
 - refreshing the UI does not cancel an active FTP cycle
+- `GET /api/v1/ingestion/source-intervals` exposes discovered 15-minute source intervals from the FTP registry
+- `POST /api/v1/operations/ftp-run-cycle` also supports `interval_start` for one selected 15-minute interval
+- interval-triggered runs enforce 15-minute boundary alignment for `interval_start`
+- interval-triggered runs store `interval_start` explicitly in `parameters_json`
 - on API startup, stale `running` FTP cycle rows from an interrupted prior process are marked `failed`
 - stale-run recovery preserves existing `summary_json` and sets:
   - `finished_at`
@@ -191,6 +195,9 @@ The UI is intentionally table- and form-based. It is not a charts-first analytic
 
 Ingestion page additions now include:
 
+- source interval discovery from the FTP registry
+- interval-triggered run action for one selected discovered interval
+- existing range-based FTP run form remains available
 - persistent FTP run list
 - running vs recent FTP run visibility
 - stage/event inspection for the latest run

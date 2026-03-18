@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -64,15 +64,17 @@ def test_build_ftp_client_rejects_missing_password() -> None:
 
 def test_run_ftp_cycle_returns_summary(monkeypatch) -> None:  # noqa: ANN001
     service = make_service()
+    captured: dict[str, object] = {}
     monkeypatch.setattr(service, "_build_pipeline", lambda: object())
     monkeypatch.setattr(service, "_build_ftp_client", lambda: object())
     monkeypatch.setattr(
         "lte_pm_platform.services.operation_service.run_locked_ftp_cycle",
-        lambda **kwargs: {"summary": {"scanned": 10, "downloaded": 2}},
+        lambda **kwargs: captured.update(kwargs) or {"summary": {"scanned": 10, "downloaded": 2}},
     )
 
     result = service.run_ftp_cycle(
         limit=20,
+        interval_start=None,
         start=date(2026, 3, 5),
         end=date(2026, 3, 5),
         revision_policy="additive",
@@ -82,6 +84,8 @@ def test_run_ftp_cycle_returns_summary(monkeypatch) -> None:  # noqa: ANN001
     )
 
     assert result == {"scanned": 10, "downloaded": 2}
+    assert captured["start"] == datetime(2026, 3, 5, 0, 0)
+    assert captured["end"] == datetime(2026, 3, 5, 23, 59, 59, 999999)
 
 
 def test_enqueue_ftp_cycle_returns_run(monkeypatch) -> None:  # noqa: ANN001
@@ -100,6 +104,7 @@ def test_enqueue_ftp_cycle_returns_run(monkeypatch) -> None:  # noqa: ANN001
 
     result = service.enqueue_ftp_cycle(
         limit=5,
+        interval_start=None,
         start=date(2026, 3, 5),
         end=date(2026, 3, 5),
         revision_policy="additive",
@@ -111,6 +116,37 @@ def test_enqueue_ftp_cycle_returns_run(monkeypatch) -> None:  # noqa: ANN001
 
     assert result["id"] == 9
     assert result["parameters_json"]["limit"] == 5
+
+
+def test_enqueue_ftp_cycle_normalizes_interval_start_to_15_minute_window(monkeypatch) -> None:  # noqa: ANN001
+    service = make_service()
+    captured: dict[str, object] = {}
+
+    class FakeRepo:
+        def create_run(self, **kwargs):  # noqa: ANN001, ANN202
+            captured.update(kwargs)
+            return {"id": 10, "status": "queued", "parameters_json": kwargs["parameters"]}
+
+    monkeypatch.setattr(
+        "lte_pm_platform.services.operation_service.FtpCycleRunRepository",
+        lambda connection: FakeRepo(),
+    )
+
+    result = service.enqueue_ftp_cycle(
+        limit=3,
+        interval_start=datetime(2026, 3, 5, 0, 15),
+        start=None,
+        end=None,
+        revision_policy="latest-only",
+        families=None,
+        dry_run=False,
+        retry_failed=False,
+        trigger_source="ui",
+    )
+
+    assert result["parameters_json"]["interval_start"] == "2026-03-05T00:15:00"
+    assert result["parameters_json"]["start"] == "2026-03-05T00:15:00"
+    assert result["parameters_json"]["end"] == "2026-03-05T00:30:00"
 
 
 def test_execute_ftp_cycle_run_marks_success(monkeypatch) -> None:  # noqa: ANN001
@@ -167,6 +203,7 @@ def test_run_ftp_cycle_rejects_invalid_family() -> None:
     with pytest.raises(OperationValidationError):
         service.run_ftp_cycle(
             limit=20,
+            interval_start=None,
             start=None,
             end=None,
             revision_policy="additive",
@@ -182,6 +219,7 @@ def test_run_ftp_cycle_rejects_invalid_revision_policy() -> None:
     with pytest.raises(OperationValidationError):
         service.run_ftp_cycle(
             limit=20,
+            interval_start=None,
             start=None,
             end=None,
             revision_policy="bad-policy",
@@ -203,6 +241,7 @@ def test_run_ftp_cycle_propagates_lock_error(monkeypatch) -> None:  # noqa: ANN0
     with pytest.raises(PipelineCycleLockError):
         service.run_ftp_cycle(
             limit=20,
+            interval_start=None,
             start=None,
             end=None,
             revision_policy="additive",

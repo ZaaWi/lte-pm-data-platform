@@ -26,3 +26,6 @@ class IngestionService:
 
     def get_reconciliation_preview(self, *, limit: int) -> list[dict[str, object]]:
         return reconcile_registry_rows(repository=self.repository, limit=limit)
+
+    def list_source_intervals(self, *, limit: int) -> list[dict[str, object]]:
+        return self.repository.summarize_source_intervals(limit=limit)
