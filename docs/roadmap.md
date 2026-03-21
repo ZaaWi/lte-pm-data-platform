@@ -151,6 +151,7 @@ Not included in the first system version:
 - interval-triggered FTP execution for one selected 15-minute source interval using `interval_start`
 - normalization of `interval_start` into the existing 15-minute `start` / `end` execution window
 - operator UI integration for interval-triggered runs on top of the existing Ingestion page
+- interval-level quality visibility showing families present, missing required families, conservative partial-interval status, and interval-scoped topology coverage
 
 ### Partially Implemented
 
@@ -202,6 +203,7 @@ Implemented baseline:
 - operators can now trigger a run for one selected discovered 15-minute interval while continuing to use `ftp_cycle_run` and `ftp_cycle_run_event` for execution state
 - interval-triggered runs store `interval_start` explicitly in `parameters_json`
 - interval-based ingestion aligns the operator workflow with the native PM cadence of 15-minute source intervals
+- interval quality visibility is now exposed in the Ingestion page using required LTE PM families for completeness and interval-scoped topology coverage as informational context
 - the existing day-range and backfill run capability remains available for manual broader runs
 
 ### Planned
@@ -218,7 +220,7 @@ Primary operational path:
 
 Current operator visibility layer:
 
-`registry-backed source interval discovery -> operator review in the Ingestion UI -> interval-triggered execution or existing range/backfill controls`
+`registry-backed source interval discovery -> interval quality and topology visibility in the Ingestion UI -> interval-triggered execution or existing range/backfill controls`
 
 Convenience path:
 
@@ -259,8 +261,8 @@ Success condition:
 
 Target additions:
 
-- improve partial interval awareness in the operator UI without implying completeness too early
-- add clearer interval-level summaries around families present, statuses present, and revision visibility
+- refine interval-level summaries without changing the current conservative completeness model
+- improve operator-facing notes around partial intervals and topology evidence when needed
 - keep execution state in the existing persistent FTP run and event model
 - retain the current day-range and backfill flow for manual broader runs
 
@@ -268,7 +270,7 @@ Success condition:
 
 - operators can review discovered source intervals before selecting work
 - interval-triggered runs continue to fit cleanly into the existing staged FTP flow
-- interval rows provide clearer factual summaries for operator decision-making
+- interval rows continue to provide clear factual summaries for operator decision-making
 - run details continue to be exposed through the current persistent run/event UI and API
 - broader range/backfill execution remains available and unchanged
 

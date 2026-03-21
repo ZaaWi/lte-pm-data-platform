@@ -361,6 +361,76 @@ class PmSampleRepository:
             )
             return list(cursor.fetchall())
 
+    def summarize_interval_topology_coverage(
+        self,
+        *,
+        source_files: Sequence[str],
+    ) -> list[dict]:
+        if not source_files:
+            return []
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                WITH raw_keys AS (
+                    SELECT
+                        interval_start,
+                        CONCAT(
+                            'family=PM/itbbu/ltefdd',
+                            '|sbnid=', COALESCE(sbnid, ''),
+                            '|enbid=', COALESCE(enbid, ''),
+                            '|cellid=', COALESCE(cellid, '')
+                        ) AS logical_entity_key
+                    FROM (
+                        SELECT DISTINCT
+                            interval_start,
+                            sbnid,
+                            enbid,
+                            cellid
+                        FROM pm_ltefdd_sample
+                        WHERE source_file = ANY(%s)
+                          AND dataset_family = 'PM/itbbu/ltefdd'
+                    ) AS itbbu_entities
+                    UNION ALL
+                    SELECT
+                        interval_start,
+                        CONCAT(
+                            'family=PM/sdr/ltefdd',
+                            '|sbnid=', COALESCE(sbnid, ''),
+                            '|enodebid=', COALESCE(enodebid, ''),
+                            '|cellid=', COALESCE(cellid, '')
+                        ) AS logical_entity_key
+                    FROM (
+                        SELECT DISTINCT
+                            interval_start,
+                            sbnid,
+                            enodebid,
+                            cellid
+                        FROM pm_ltefdd_sample
+                        WHERE source_file = ANY(%s)
+                          AND dataset_family = 'PM/sdr/ltefdd'
+                    ) AS sdr_entities
+                )
+                SELECT
+                    r.interval_start,
+                    COUNT(*) FILTER (
+                        WHERE t.mapping_status IS NOT NULL
+                          AND t.mapping_status <> 'UNMAPPED'
+                    ) AS topology_mapped_count,
+                    COUNT(*) FILTER (
+                        WHERE t.mapping_status IS NULL
+                           OR t.mapping_status = 'UNMAPPED'
+                    ) AS topology_unmapped_count
+                FROM raw_keys AS r
+                LEFT JOIN ref_lte_entity_topology_enrichment AS t
+                    ON t.logical_entity_key = r.logical_entity_key
+                WHERE r.logical_entity_key IS NOT NULL
+                GROUP BY r.interval_start
+                ORDER BY r.interval_start DESC
+                """,
+                (list(source_files), list(source_files)),
+            )
+            return list(cursor.fetchall())
+
     def summarize_coverage(self, limit: int) -> list[dict]:
         with self.connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(

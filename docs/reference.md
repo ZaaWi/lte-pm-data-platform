@@ -154,6 +154,22 @@ Important current guardrails:
 - `POST /api/v1/operations/ftp-run-cycle` also supports `interval_start` for one selected 15-minute interval
 - interval-triggered runs enforce 15-minute boundary alignment for `interval_start`
 - interval-triggered runs store `interval_start` explicitly in `parameters_json`
+- source-interval rows now include:
+  - `families_present`
+  - `missing_families`
+  - `partial_interval`
+  - `quality_status`
+  - `quality_notes`
+  - `topology_mapped_count`
+  - `topology_unmapped_count`
+  - `topology_coverage_pct`
+- required families for interval completeness are currently:
+  - `PM/itbbu/ltefdd`
+  - `PM/sdr/ltefdd`
+- optional observed families can still appear in `families_present`, but they do not drive `missing_families` or `partial_interval`
+- `partial_interval` is set only when one required LTE PM family is present and another required LTE PM family is missing
+- interval-scoped topology coverage is derived from the exact ingested source files for the displayed intervals and the required LTE PM families only
+- the Ingestion page shows `no topology rows` when no topology-observable rows exist for the required LTE PM families in that interval
 - on API startup, stale `running` FTP cycle rows from an interrupted prior process are marked `failed`
 - stale-run recovery preserves existing `summary_json` and sets:
   - `finished_at`
@@ -197,6 +213,7 @@ Ingestion page additions now include:
 
 - source interval discovery from the FTP registry
 - interval-triggered run action for one selected discovered interval
+- interval quality summary with families present, missing required families, partial visibility, and interval-scoped topology coverage
 - existing range-based FTP run form remains available
 - persistent FTP run list
 - running vs recent FTP run visibility

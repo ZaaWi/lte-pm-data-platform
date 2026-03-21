@@ -279,9 +279,12 @@ function renderSourceIntervalsTable(rows: Array<Record<string, unknown>>): strin
     <tr>
       <th>interval_start</th>
       <th>total_files</th>
-      <th>families_present</th>
-      <th>family_count</th>
-      <th>statuses_present</th>
+      <th>families</th>
+      <th>missing</th>
+      <th>quality</th>
+      <th>topology</th>
+      <th>notes</th>
+      <th>statuses</th>
       <th>max_revision</th>
       <th>last_seen_at</th>
       <th>last_scan_at</th>
@@ -292,13 +295,18 @@ function renderSourceIntervalsTable(rows: Array<Record<string, unknown>>): strin
     .map((row) => {
       const intervalStart = String(row.interval_start ?? '');
       const families = Array.isArray(row.families_present) ? row.families_present.join(', ') : String(row.families_present ?? '');
+      const missingFamilies = Array.isArray(row.missing_families) ? row.missing_families.join(', ') : String(row.missing_families ?? '');
       const statuses = Array.isArray(row.statuses_present) ? row.statuses_present.join(', ') : String(row.statuses_present ?? '');
+      const topology = formatTopologyCoverage(row);
       return `
         <tr>
           <td>${escapeHtml(intervalStart)}</td>
           <td>${escapeHtml(row.total_files)}</td>
           <td>${escapeHtml(families)}</td>
-          <td>${escapeHtml(row.family_count)}</td>
+          <td>${escapeHtml(missingFamilies)}</td>
+          <td>${escapeHtml(row.quality_status)}</td>
+          <td>${escapeHtml(topology)}</td>
+          <td>${escapeHtml(row.quality_notes)}</td>
           <td>${escapeHtml(statuses)}</td>
           <td>${escapeHtml(row.max_revision)}</td>
           <td>${escapeHtml(row.last_seen_at)}</td>
@@ -309,4 +317,20 @@ function renderSourceIntervalsTable(rows: Array<Record<string, unknown>>): strin
     })
     .join('');
   return `<div class="table-wrap"><table class="table"><thead>${header}</thead><tbody>${body}</tbody></table></div>`;
+}
+
+function formatTopologyCoverage(row: Record<string, unknown>): string {
+  const mapped = Number(row.topology_mapped_count ?? 0);
+  const unmapped = Number(row.topology_unmapped_count ?? 0);
+  const pct = row.topology_coverage_pct;
+  if (!Number.isFinite(mapped) || !Number.isFinite(unmapped)) {
+    return 'n/a';
+  }
+  if (mapped === 0 && unmapped === 0) {
+    return 'no topology rows';
+  }
+  if (pct === null || pct === undefined) {
+    return `${mapped}/${unmapped} mapped/unmapped`;
+  }
+  return `${mapped}/${unmapped} mapped/unmapped (${pct}%)`;
 }

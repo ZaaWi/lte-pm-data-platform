@@ -259,8 +259,15 @@ def test_ingestion_source_intervals(monkeypatch) -> None:  # noqa: ANN001
                 "interval_start": "2026-03-05T00:15:00",
                 "total_files": 3,
                 "families_present": ["PM/itbbu/ltefdd", "PM/sdr/ltefdd"],
+                "missing_families": [],
                 "family_count": 2,
                 "statuses_present": ["DISCOVERED", "INGESTED"],
+                "partial_interval": False,
+                "quality_status": "complete",
+                "quality_notes": "Required LTE PM families discovered for this interval.",
+                "topology_mapped_count": 10,
+                "topology_unmapped_count": 2,
+                "topology_coverage_pct": 83.33,
                 "max_revision": 1,
                 "last_seen_at": "2026-03-18T10:12:30",
                 "last_scan_at": "2026-03-18T10:12:30",
@@ -273,6 +280,10 @@ def test_ingestion_source_intervals(monkeypatch) -> None:  # noqa: ANN001
     assert response.count == 1
     assert response.rows[0]["interval_start"] == "2026-03-05T00:15:00"
     assert response.rows[0]["family_count"] == 2
+    assert response.rows[0]["partial_interval"] is False
+    assert response.rows[0]["quality_status"] == "complete"
+    assert response.rows[0]["topology_mapped_count"] == 10
+    assert response.rows[0]["topology_coverage_pct"] == 83.33
 
 
 def test_unmapped_entities(monkeypatch) -> None:  # noqa: ANN001

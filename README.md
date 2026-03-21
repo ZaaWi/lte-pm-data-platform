@@ -71,6 +71,19 @@ On the `Ingestion` page you can now:
 - trigger a run for one selected interval
 - keep using the existing range-based run form for broader manual runs
 
+## Interval Quality & Trust Visibility
+
+The `Ingestion` page includes interval-level quality details to help operators decide what to run next.
+
+For each discovered interval, the UI shows:
+
+- `Families`
+- `Missing`
+- `Quality`
+- `Topology`
+
+`Quality` is based only on the required LTE PM families for this operator path. `Topology` is informational only and shows mapped/unmapped interval coverage when topology-observable rows exist, or `no topology rows` when they do not.
+
 ## KPI usage
 
 Use the `KPI Results` page or the API to review data by family, aggregation level, and dataset.

@@ -60,3 +60,11 @@ CREATE INDEX IF NOT EXISTS idx_pm_ltefdd_sample_interval_start
 
 CREATE INDEX IF NOT EXISTS idx_pm_ltefdd_sample_cellid
     ON pm_ltefdd_sample (cellid);
+
+CREATE INDEX IF NOT EXISTS idx_pm_ltefdd_sample_itbbu_ltefdd_source_entity
+    ON pm_ltefdd_sample (source_file, sbnid, enbid, cellid)
+    WHERE dataset_family = 'PM/itbbu/ltefdd';
+
+CREATE INDEX IF NOT EXISTS idx_pm_ltefdd_sample_sdr_ltefdd_source_entity
+    ON pm_ltefdd_sample (source_file, sbnid, enodebid, cellid)
+    WHERE dataset_family = 'PM/sdr/ltefdd';

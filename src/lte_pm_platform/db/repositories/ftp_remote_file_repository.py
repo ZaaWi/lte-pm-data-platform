@@ -144,6 +144,32 @@ class FtpRemoteFileRepository:
             )
             return list(cursor.fetchall())
 
+    def list_ingested_interval_source_files(
+        self,
+        *,
+        interval_starts: Sequence[object],
+        dataset_families: Sequence[str],
+    ) -> list[dict]:
+        if not interval_starts or not dataset_families:
+            return []
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT DISTINCT
+                    interval_start,
+                    dataset_family,
+                    remote_filename
+                FROM ftp_remote_file
+                WHERE interval_start = ANY(%s)
+                  AND dataset_family = ANY(%s)
+                  AND status = 'INGESTED'
+                  AND remote_filename IS NOT NULL
+                ORDER BY interval_start DESC, dataset_family, remote_filename
+                """,
+                (list(interval_starts), list(dataset_families)),
+            )
+            return list(cursor.fetchall())
+
     def fetch_remote_file_by_id(self, *, remote_file_id: int) -> dict | None:
         rows = self.fetch_registry_rows(remote_file_ids=[remote_file_id], limit=1)
         return rows[0] if rows else None
