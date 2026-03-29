@@ -29,14 +29,14 @@ Local topology CSV inputs now present in `data/reference/`:
 
 These were generated conservatively from:
 
-- `LTE Project Parameter-20260301.xlsx`
+- `topology_reference_workbook_20260301.xlsx`
 - sheet: `4G LTE`
 
-The current local seed set is good enough for local development and operator validation. It should not yet be treated as the final authoritative production mapping source.
+The current local seed set is good enough for local development and operator validation. It should not yet be treated as the final long-term reference source.
 
 ## Topology Workbook Snapshot Workflow
 
-The current topology authority baseline is workbook-driven.
+The current topology reference baseline is workbook-driven.
 
 Implemented workflow:
 
@@ -89,7 +89,7 @@ Current local verification status:
 - topology reference tables load successfully
 - `sync-topology` materially maps `ref_lte_entity_topology_enrichment`
 - remaining unmapped rows are a small minority
-- topology-aware site/region operator paths are now meaningful locally
+- topology-aware site/region views are usable in local verification
 
 ## FTP Source Configuration
 
@@ -241,7 +241,7 @@ Load sample data:
 
 ```bash
 python -m lte_pm_platform.cli load-sample \
-  --zip data/input/local_selection/UMEID_ITBBU_LTEFDD_PM_COMMON_ZTE_20260305_0000.tar.gz
+  --zip data/input/local_selection/sample_pm_interval_archive.tar.gz
 python -m lte_pm_platform.cli sync-entities
 ```
 
@@ -257,7 +257,7 @@ python -m lte_pm_platform.cli load-kpi-definitions --csv data/reference/kpi_defi
 Run API:
 
 ```bash
-./.venv/bin/python -m uvicorn lte_pm_platform.api.app:app --host 0.0.0.0 --port 8000
+./.venv/bin/python -m uvicorn lte_pm_platform.api.app:app --host 127.0.0.1 --port 8000
 ```
 
 Run UI:
@@ -279,4 +279,3 @@ Important view groups:
 - verified KPI validation views
 
 For exact SQL object names, inspect `sql/init/` and `sql/queries/`.
-

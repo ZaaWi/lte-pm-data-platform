@@ -9,18 +9,18 @@ from lte_pm_platform.pipeline.ingest.topology_workbook import (
 
 
 def test_extract_release_date_from_filename() -> None:
-    result = extract_release_date_from_filename("LTE Project Parameter-20260301.xlsx")
+    result = extract_release_date_from_filename("topology_reference_workbook_20260301.xlsx")
 
     assert str(result) == "2026-03-01"
 
 
 def test_parse_topology_workbook_generates_dual_family_rows(tmp_path: Path) -> None:
-    workbook_path = tmp_path / "LTE Project Parameter-20260301.xlsx"
+    workbook_path = tmp_path / "topology_reference_workbook_20260301.xlsx"
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "4G LTE"
     sheet.append(["SubnetID", "eNodeBid", "ENODEBName", "CellID", "CELLNAME", "SiteName", "Region", "Area", "ClusterID", "TEAM"])
-    sheet.append(["45", "3517", "BADR001L", "1", "BADR001L-1", "BADR001", "RU", "Gharyan", "Cluster33", "6"])
+    sheet.append(["45", "3517", "NODE001", "1", "NODE001-1", "SITE001", "REG1", "Area1", "Cluster01", "6"])
     workbook.save(workbook_path)
 
     parsed = parse_topology_workbook(workbook_path)

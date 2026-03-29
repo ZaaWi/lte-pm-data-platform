@@ -21,6 +21,7 @@ data/rejected/*
 
 ui/node_modules/
 ui/dist/
+*.tsbuildinfo
 
 *.xls
 extracted_*.csv

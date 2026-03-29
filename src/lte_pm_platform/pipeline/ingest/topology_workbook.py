@@ -152,7 +152,7 @@ def _normalize_workbook_row(row: dict[str, str], source_row_number: int) -> list
         "workbook_enodeb_id": enodeb_id,
         "workbook_enodeb_name": enodeb_name,
         "workbook_cell_name": cell_name,
-        "mapping_source": "project_parameter_workbook",
+        "mapping_source": "topology_workbook",
         "notes": None,
     }
 

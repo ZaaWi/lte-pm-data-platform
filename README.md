@@ -135,7 +135,7 @@ For each discovered interval, the UI shows:
 - `Quality`
 - `Topology`
 
-`Quality` is based only on the required LTE PM families for this operator path. `Topology` is informational only and shows mapped/unmapped interval coverage when topology-observable rows exist, or `no topology rows` when they do not.
+`Quality` is based only on the required LTE PM families for this current workflow. `Topology` is informational only and shows mapped/unmapped interval coverage when topology-observable rows exist, or `no topology rows` when they do not.
 
 ## KPI usage
 
@@ -169,4 +169,4 @@ python -m lte_pm_platform.cli sync-topology
 
 - FTP sources can be configured with `FTP_REMOTE_DIRECTORY` or `FTP_REMOTE_DIRECTORIES`.
 - interval-triggered ingestion uses the existing FTP run queue and enforces 15-minute `interval_start` alignment
-- See [docs/reference.md](https://github.com/ZaaWi/lte-pm-data-platform/blob/main/docs/reference.md) for more details.
+- See [docs/reference.md](docs/reference.md) for more details.
