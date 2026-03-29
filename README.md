@@ -8,17 +8,31 @@ The system ingests PM archives, stores raw records in PostgreSQL, enriches them 
 
 ```mermaid
 flowchart LR
-    A[Local or FTP archive] --> B[Archive discovery]
-    B --> C[CSV reader]
-    C --> D[PM parser]
-    D --> E[Raw records]
-    E --> F[(pm_ltefdd_sample)]
-    F --> G[sync-entities]
-    G --> H[(ref_lte_entity_identity)]
-    H --> I[sync-topology]
-    I --> J[(ref_lte_entity_topology_enrichment)]
-    F --> K[KPI queries]
-    K --> L[CLI / API / UI]
+    A[FTP server / local mirrored archives] --> B[Discovery]
+    B --> C[(ftp_remote_file registry)]
+    C --> D[Staged download]
+    D --> E[Staged ingest]
+    E --> F[Archive streaming]
+    F --> G[CSV parsing]
+    G --> H[Counter normalization]
+    H --> I[(pm_ltefdd_sample)]
+
+    I --> J[sync-entities]
+    J --> K[(ref_lte_entity_identity)]
+
+    L[Topology workbook / curated reference inputs] --> M[Snapshot / reconciliation / apply]
+    M --> N[Topology reference tables]
+
+    K --> O[sync-topology]
+    N --> O
+    O --> P[(ref_lte_entity_topology_enrichment)]
+
+    I --> Q[SQL analytics / KPI queries]
+    P --> Q
+
+    Q --> R[CLI]
+    Q --> S[API]
+    Q --> T[UI]
 ```
 
 ## Setup
