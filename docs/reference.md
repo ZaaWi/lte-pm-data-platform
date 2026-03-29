@@ -279,3 +279,4 @@ Important view groups:
 - verified KPI validation views
 
 For exact SQL object names, inspect `sql/init/` and `sql/queries/`.
+
