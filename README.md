@@ -8,31 +8,72 @@ The system ingests PM archives, stores raw records in PostgreSQL, enriches them 
 
 ```mermaid
 flowchart LR
-    A[FTP server / local mirrored archives] --> B[Discovery]
-    B --> C[(ftp_remote_file registry)]
-    C --> D[Staged download]
-    D --> E[Staged ingest]
-    E --> F[Archive streaming]
-    F --> G[CSV parsing]
-    G --> H[Counter normalization]
-    H --> I[(pm_ltefdd_sample)]
 
-    I --> J[sync-entities]
-    J --> K[(ref_lte_entity_identity)]
+    subgraph S[Data Sources]
+        A1[FTP server]
+        A2[Local mirrored archives]
+        A3[Topology workbook / curated reference inputs]
+    end
 
-    L[Topology workbook / curated reference inputs] --> M[Snapshot / reconciliation / apply]
-    M --> N[Topology reference tables]
+    subgraph I[Ingestion Pipeline]
+        B1[Discovery]
+        B2[(ftp_remote_file)]
+        B3[Staged download]
+        B4[Staged ingest]
+        B5[Archive streaming]
+        B6[CSV parsing]
+        B7[Counter normalization]
+        B8[(pm_ltefdd_sample)]
+    end
 
-    K --> O[sync-topology]
-    N --> O
-    O --> P[(ref_lte_entity_topology_enrichment)]
+    subgraph E[Entity Layer]
+        C1[sync-entities]
+        C2[(ref_lte_entity_identity)]
+    end
 
-    I --> Q[SQL analytics / KPI queries]
-    P --> Q
+    subgraph T[Topology Authority and Enrichment]
+        D1[Snapshot / reconciliation / apply]
+        D2[Topology reference tables]
+        D3[sync-topology]
+        D4[(ref_lte_entity_topology_enrichment)]
+    end
 
-    Q --> R[CLI]
-    Q --> S[API]
-    Q --> T[UI]
+    subgraph Q[Analytics Layer]
+        E1[SQL analytics / KPI queries]
+    end
+
+    subgraph X[Access Layer]
+        F1[CLI]
+        F2[API]
+        F3[UI]
+    end
+
+    A1 --> B1
+    A2 --> B1
+    B1 --> B2
+    B2 --> B3
+    B3 --> B4
+    B4 --> B5
+    B5 --> B6
+    B6 --> B7
+    B7 --> B8
+
+    B8 --> C1
+    C1 --> C2
+
+    A3 --> D1
+    D1 --> D2
+
+    C2 --> D3
+    D2 --> D3
+    D3 --> D4
+
+    B8 --> E1
+    D4 --> E1
+
+    E1 --> F1
+    E1 --> F2
+    E1 --> F3
 ```
 
 ## Setup
