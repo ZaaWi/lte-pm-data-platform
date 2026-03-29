@@ -7,12 +7,11 @@ LTE PM Platform is a local developer stack for ingesting LTE PM archives into Po
 The system ingests PM archives, stores raw records in PostgreSQL, enriches them with entity and topology data, and exposes results through CLI, API, and UI.
 
 ```mermaid
-flowchart LR
+flowchart TB
 
     subgraph S[Data Sources]
         A1[FTP server]
         A2[Local mirrored archives]
-        A3[Topology workbook / curated reference inputs]
     end
 
     subgraph I[Ingestion Pipeline]
@@ -23,19 +22,20 @@ flowchart LR
         B5[Archive streaming]
         B6[CSV parsing]
         B7[Counter normalization]
-        B8[(pm_ltefdd_sample)]
     end
 
-    subgraph E[Entity Layer]
-        C1[sync-entities]
-        C2[(ref_lte_entity_identity)]
+    subgraph D[Core Data Model]
+        C1[(pm_ltefdd_sample)]
+        C2[sync-entities]
+        C3[(ref_lte_entity_identity)]
     end
 
     subgraph T[Topology Authority and Enrichment]
-        D1[Snapshot / reconciliation / apply]
-        D2[Topology reference tables]
-        D3[sync-topology]
-        D4[(ref_lte_entity_topology_enrichment)]
+        D1[Topology workbook / curated reference inputs]
+        D2[Snapshot / reconciliation / apply]
+        D3[Topology reference tables]
+        D4[sync-topology]
+        D5[(ref_lte_entity_topology_enrichment)]
     end
 
     subgraph Q[Analytics Layer]
@@ -56,20 +56,18 @@ flowchart LR
     B4 --> B5
     B5 --> B6
     B6 --> B7
-    B7 --> B8
-
-    B8 --> C1
+    B7 --> C1
     C1 --> C2
+    C2 --> C3
 
-    A3 --> D1
     D1 --> D2
-
-    C2 --> D3
     D2 --> D3
+    C3 --> D4
     D3 --> D4
+    D4 --> D5
 
-    B8 --> E1
-    D4 --> E1
+    C1 --> E1
+    D5 --> E1
 
     E1 --> F1
     E1 --> F2
